@@ -192,22 +192,31 @@ export function createMapView(container: HTMLElement): MapView {
     }
 
     // 3. Shaded relief (hillshade) layer: casts real sunlight and shadows on terrain features
-    map.addLayer(
-      {
-        id: 'hillshade-relief',
-        type: 'hillshade',
-        source: 'terrain-dem',
-        paint: {
-          'hillshade-exaggeration': 0.85,
-          'hillshade-shadow-color': '#090d16',
-          'hillshade-highlight-color': '#ffffff',
-          'hillshade-accent-color': '#1e293b',
-          'hillshade-illumination-direction': 315,
-          'hillshade-illumination-altitude': 45,
-        },
+    map.addLayer({
+      id: 'hillshade-relief',
+      type: 'hillshade',
+      source: 'terrain-dem',
+      paint: {
+        'hillshade-exaggeration': 0.85,
+        'hillshade-shadow-color': '#090d16',
+        'hillshade-highlight-color': '#ffffff',
+        'hillshade-accent-color': '#1e293b',
+        'hillshade-illumination-direction': 315,
+        'hillshade-illumination-altitude': 45,
       },
-      'grid-line',
-    )
+    })
+
+    // 4. Continuous RF heatmap polygon cells: solid contiguous quads that NEVER dilute on zoom
+    map.addLayer({
+      id: 'rf-heatmap-cells',
+      type: 'fill',
+      source: 'rf-heatmap',
+      paint: {
+        'fill-color': ['coalesce', ['get', 'color'], '#20c997'],
+        'fill-opacity': ['coalesce', ['get', 'opacity'], 0.55],
+        'fill-antialias': true,
+      },
+    })
 
     map.addLayer({
       id: 'grid-line',
@@ -215,21 +224,6 @@ export function createMapView(container: HTMLElement): MapView {
       source: 'grid',
       paint: { 'line-color': '#868e96', 'line-width': 1, 'line-dasharray': [4, 4] },
     })
-
-    // 4. Continuous RF heatmap polygon cells: solid contiguous quads that NEVER dilute on zoom
-    map.addLayer(
-      {
-        id: 'rf-heatmap-cells',
-        type: 'fill',
-        source: 'rf-heatmap',
-        paint: {
-          'fill-color': ['coalesce', ['get', 'color'], '#20c997'],
-          'fill-opacity': ['coalesce', ['get', 'opacity'], 0.55],
-          'fill-antialias': true,
-        },
-      },
-      'rf-coverage-fill',
-    )
     map.addLayer({
       id: 'rf-coverage-fill',
       type: 'fill',

@@ -232,11 +232,10 @@ def create_app(
             if t.type == "jammer":
                 jammers.append((t.id, t.pos, t.eirp_w))
 
-        # Calculate expanded bounding box from scenario grid
-        # (with 15km margin to cover entire operational theater)
+        # Calculate bounding box with 5km margin around scenario grid
         frame = grid.frame
-        sw = frame.to_position(-15000.0, -15000.0)
-        ne = frame.to_position(grid.cols * grid.cell_m + 15000.0, grid.rows * grid.cell_m + 15000.0)
+        sw = frame.to_position(-5000.0, -5000.0)
+        ne = frame.to_position(grid.cols * grid.cell_m + 5000.0, grid.rows * grid.cell_m + 5000.0)
         bounds = (sw.lat, sw.lon, ne.lat, ne.lon)
 
         return compute_js_heatmap_geojson(

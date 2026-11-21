@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from corridor.domain.geo import LocalFrame, Position
+from corridor.domain.geo import EARTH_RADIUS_M, LocalFrame, Position
 from corridor.domain.rf.dem import DemProvider
 from corridor.domain.rf.diffraction import (
     SPEED_OF_LIGHT,
@@ -483,6 +483,10 @@ def compute_js_heatmap_geojson(
     # Safe zones behind mountains and far from jammers have base weight that renders as solid GREEN
     weights = 0.12 + 0.88 * np.clip((js_arr + 6.0) / 18.0, 0.0, 1.0)
 
+    half = step_m / 2.0
+    d_lat = math.degrees(half / EARTH_RADIUS_M)
+    d_lon = math.degrees(half / (EARTH_RADIUS_M * frame._cos_lat))
+
     features: list[dict[str, Any]] = []
     for i, p in enumerate(grid_pts):
         js_val = float(js_arr[i])
@@ -509,21 +513,16 @@ def compute_js_heatmap_geojson(
             opacity = 0.75
 
         if cells:
-            half = step_m / 2.0
-            cx, cy = xy_pts[i]
-            c1 = frame.to_position(cx - half, cy - half)
-            c2 = frame.to_position(cx + half, cy - half)
-            c3 = frame.to_position(cx + half, cy + half)
-            c4 = frame.to_position(cx - half, cy + half)
+            lon, lat = p.lon, p.lat
             geom: dict[str, Any] = {
                 "type": "Polygon",
                 "coordinates": [
                     [
-                        [round(c1.lon, 6), round(c1.lat, 6)],
-                        [round(c2.lon, 6), round(c2.lat, 6)],
-                        [round(c3.lon, 6), round(c3.lat, 6)],
-                        [round(c4.lon, 6), round(c4.lat, 6)],
-                        [round(c1.lon, 6), round(c1.lat, 6)],
+                        [round(lon - d_lon, 6), round(lat - d_lat, 6)],
+                        [round(lon + d_lon, 6), round(lat - d_lat, 6)],
+                        [round(lon + d_lon, 6), round(lat + d_lat, 6)],
+                        [round(lon - d_lon, 6), round(lat + d_lat, 6)],
+                        [round(lon - d_lon, 6), round(lat - d_lat, 6)],
                     ]
                 ],
             }
