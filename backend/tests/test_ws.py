@@ -187,27 +187,20 @@ def test_rf_coverage_endpoint(scenario: Scenario) -> None:
     assert "threat_id" in first["properties"]
 
 
-def test_rf_heatmap_endpoint(scenario: Scenario) -> None:
+def test_rf_heatmap_endpoint_returns_a_png_image_once_per_configuration(
+    scenario: Scenario,
+) -> None:
     client = TestClient(create_app(scenario, clock_factor=20, cell_m=100))
     response = client.get("/api/rf/heatmap?step_m=500")
     assert response.status_code == 200
     data = response.json()
-    assert data["type"] == "FeatureCollection"
-    assert len(data["features"]) > 0
-    pt0 = data["features"][0]
-    assert pt0["geometry"]["type"] == "Point"
-    assert "weight" in pt0["properties"]
-    assert "js_db" in pt0["properties"]
-    assert "status" in pt0["properties"]
+    assert data["image"].startswith("data:image/png;base64,")
+    (w, n), (e, n2), (e2, s), (w2, s2) = data["coordinates"]
+    assert (w, e, n, s) == (w2, e2, n2, s2)
+    assert w < e and s < n
+    assert data["step_m"] == 500
 
-    # Test cells=true polygon quads
-    resp_cells = client.get("/api/rf/heatmap?step_m=500&cells=true")
-    assert resp_cells.status_code == 200
-    data_cells = resp_cells.json()
-    cell0 = data_cells["features"][0]
-    assert cell0["geometry"]["type"] == "Polygon"
-    assert "color" in cell0["properties"]
-    assert "opacity" in cell0["properties"]
+    assert client.get("/api/rf/heatmap?step_m=500").json() == data
 
 
 def test_rf_probe_endpoint(scenario: Scenario) -> None:

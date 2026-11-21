@@ -1,7 +1,7 @@
 // All map code lives here, framework-free. React only creates the view and calls its setters.
 // Setters can be called before the style is loaded: the latest data is applied on load.
 import * as maplibregl from 'maplibre-gl'
-import type { GeoJSONSource, Map as MlMap, StyleSpecification } from 'maplibre-gl'
+import type { GeoJSONSource, ImageSource, Map as MlMap, StyleSpecification } from 'maplibre-gl'
 import type { Feature, FeatureCollection } from 'geojson'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
@@ -110,6 +110,12 @@ export interface RequestPoints {
   picking: boolean
 }
 
+/** J/S heatmap from `/api/rf/heatmap`: a PNG and its corners (NW, NE, SE, SW as [lon, lat]). */
+export interface RfHeatmap {
+  image: string
+  coordinates: [[number, number], [number, number], [number, number], [number, number]]
+}
+
 export interface MapView {
   setScene(scene: Scene): void
   /** Points of the mission request being filled in. */
@@ -120,7 +126,7 @@ export interface MapView {
   setRoutes(routes: MissionRoutes[]): void
   setDrones(drones: DroneMark[]): void
   setRfCoverage(coverage: FeatureCollection | null): void
-  setRfHeatmap(heatmap: FeatureCollection | null): void
+  setRfHeatmap(heatmap: RfHeatmap | null): void
   onHover(cb: (pos: Position | null) => void): void
   setLayerVisibility(vis: LayerVisibility): void
   set3D(enabled: boolean): void
@@ -150,6 +156,7 @@ export function createMapView(container: HTMLElement): MapView {
   let loaded = false
   let is3dMode = false
   const pending: Record<string, FC> = {}
+  let heatmap: RfHeatmap | null = null
   let scene: Scene | null = null
   let fitted = ''
   let states: Record<string, ZoneState> = {}
@@ -188,7 +195,38 @@ export function createMapView(container: HTMLElement): MapView {
     map.setLayoutProperty('rf-coverage-fill', 'visibility', v(visibility.rf))
     map.setLayoutProperty('rf-coverage-line', 'visibility', v(visibility.rf))
     map.setLayoutProperty('rf-safe-baseline', 'visibility', v(visibility.heatmap))
-    map.setLayoutProperty('rf-heatmap-cells', 'visibility', v(visibility.heatmap))
+    if (map.getLayer('rf-heatmap')) {
+      map.setLayoutProperty('rf-heatmap', 'visibility', v(visibility.heatmap))
+    }
+  }
+
+  // An image source needs its image at creation: added on the first heatmap, removed on null.
+  const applyHeatmap = () => {
+    if (!loaded) return
+    const source = map.getSource('rf-heatmap') as ImageSource | undefined
+    if (!heatmap) {
+      if (map.getLayer('rf-heatmap')) map.removeLayer('rf-heatmap')
+      if (source) map.removeSource('rf-heatmap')
+      return
+    }
+    const image = { url: heatmap.image, coordinates: heatmap.coordinates }
+    if (source) {
+      source.updateImage(image)
+      return
+    }
+    map.addSource('rf-heatmap', { type: 'image', ...image })
+    // Below the grid, as the cells it replaces. Nearest resampling keeps each pixel a solid
+    // square at any zoom.
+    map.addLayer(
+      {
+        id: 'rf-heatmap',
+        type: 'raster',
+        source: 'rf-heatmap',
+        layout: { visibility: visibility.heatmap ? 'visible' : 'none' },
+        paint: { 'raster-resampling': 'nearest', 'raster-fade-duration': 0 },
+      },
+      'grid-line',
+    )
   }
 
   map.on('error', (e) => {
@@ -244,7 +282,7 @@ export function createMapView(container: HTMLElement): MapView {
       },
     })
 
-    for (const id of ['grid', 'nominal', 'zones', 'routes', 'rf-coverage', 'rf-heatmap']) {
+    for (const id of ['grid', 'nominal', 'zones', 'routes', 'rf-coverage']) {
       map.addSource(id, { type: 'geojson', data: pending[id] ?? empty() })
     }
 
@@ -260,18 +298,6 @@ export function createMapView(container: HTMLElement): MapView {
         'hillshade-accent-color': '#1e293b',
         'hillshade-illumination-direction': 315,
         'hillshade-illumination-altitude': 45,
-      },
-    })
-
-    // 4. Continuous RF heatmap polygon cells: solid contiguous quads that NEVER dilute on zoom
-    map.addLayer({
-      id: 'rf-heatmap-cells',
-      type: 'fill',
-      source: 'rf-heatmap',
-      paint: {
-        'fill-color': ['coalesce', ['get', 'color'], '#20c997'],
-        'fill-opacity': ['coalesce', ['get', 'opacity'], 0.55],
-        'fill-antialias': true,
       },
     })
 
@@ -341,6 +367,7 @@ export function createMapView(container: HTMLElement): MapView {
       },
     })
     loaded = true
+    applyHeatmap()
     if (is3dMode) {
       map.setTerrain({ source: 'terrain-dem', exaggeration: 2.8 })
     }
@@ -470,8 +497,9 @@ export function createMapView(container: HTMLElement): MapView {
     setRfCoverage(coverage) {
       setData('rf-coverage', coverage ?? empty())
     },
-    setRfHeatmap(heatmap) {
-      setData('rf-heatmap', heatmap ?? empty())
+    setRfHeatmap(next) {
+      heatmap = next
+      applyHeatmap()
     },
     onHover(cb) {
       map.on('mousemove', (e) => {
