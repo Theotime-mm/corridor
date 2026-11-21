@@ -40,14 +40,16 @@ src/
 - Notification feed with the confirm button from `notification.action`.
 - Timeline: cuts per jammer, drone route segments (`ground` / `fly` / `hover`), orange cursor on
   live time. Drag the cursor to scrub: map and zones follow; "Back to live" resets.
-- `plan.updated`: both routes on the map, metrics in the mission card, drone interpolated on the
-  optimised route. The backend does not emit it yet: use "Mock plan (dev)".
+- `plan.updated`: both routes on the map, metrics in the mission card. Launch is disabled while
+  the plan is a `preview` (cut not confirmed).
+- Live drone from `drone.state` (position, battery, delay); when scrubbing, the drone is placed on
+  the planned route instead. "Hold drone 120 s (demo)" sends `inject.delay` (late-drone twist).
+- "Mock plan (dev)" still injects a fake plan locally, for work without the backend planner.
 
 ## To do
 
 - Offline basemap (PMTiles extract of the demo area). Today: online OSM raster tiles.
 - Backend serves `frontend/dist/` (static mount in `adapters/ws/app.py`).
-- `drone.state` and `jammer.restarted` when the backend emits them.
 - Schedule / move cuts by dragging on the timeline (today: the form in the side panel).
 - Demo controls: scenario picker, reset, keyboard shortcuts.
 - Bundle size: maplibre + vis-timeline + mantine in one 2 MB chunk; split if it matters.

@@ -133,6 +133,16 @@ class ThreatShape:
     beam: Beam | None = None
     sidelobe: Disc | None = None
 
+    def contains(self, x: float, y: float) -> bool:
+        """True if (x, y) lies on the forbidden side of the zone (exact, no cell margin)."""
+        d = self.disc
+        if self.beam is not None and not self.beam.contains(x, y):
+            if self.sidelobe is None:
+                return False
+            d = self.sidelobe
+        inside = math.hypot(x - d.x, y - d.y) < d.radius_m
+        return inside == (d.forbidden == "inside")
+
 
 def mission_shapes(scenario: Scenario) -> list[ThreatShape]:
     """Zones that matter to the mission: jammers on its band, every radar."""

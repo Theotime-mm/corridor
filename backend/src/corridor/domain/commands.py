@@ -51,7 +51,15 @@ class SetClock(Model):
     paused: bool | None = None
 
 
+class InjectDelay(Model):
+    """Demo twist: hold the flying drone where it is for ``delay_s`` simulated seconds."""
+
+    type: Literal["inject.delay"] = "inject.delay"
+    actor: str
+    delay_s: float = Field(gt=0, le=1800)
+
+
 Command = Annotated[
-    ScheduleCut | CancelCut | ConfirmCut | LaunchMission | SetClock,
+    ScheduleCut | CancelCut | ConfirmCut | LaunchMission | SetClock | InjectDelay,
     Field(discriminator="type"),
 ]

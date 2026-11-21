@@ -115,7 +115,7 @@ def test_directional_mask_forbids_every_cell_that_touches_the_zone(azimuth_deg: 
     samples = np.linspace(0, grid.cell_m, 11)
     for row, col in itertools.product(range(grid.rows), range(grid.cols)):
         touching[row, col] = any(
-            in_zone(zone, col * grid.cell_m + dx, row * grid.cell_m + dy)
+            zone.contains(col * grid.cell_m + dx, row * grid.cell_m + dy)
             for dx, dy in itertools.product(samples, samples)
         )
     assert not (touching & ~mask).any()  # safe: no touching cell is left free
@@ -255,18 +255,7 @@ def assert_route_is_clear(scenario: Scenario, cuts: list[Cut], route: list[Route
                     and c.start_s + ENTRY_MARGIN_S <= t <= c.end_s - EXIT_MARGIN_S
                     for c in cuts
                 )
-                assert off or not in_zone(zone, x, y), (x, y, t, zone.threat)
-
-
-def in_zone(zone: ThreatShape, x: float, y: float) -> bool:
-    """Exact test, independent of the masks: is (x, y) on the forbidden side of ``zone``?"""
-    d = zone.disc
-    if zone.beam is not None and not zone.beam.contains(x, y):
-        if zone.sidelobe is None:
-            return False
-        d = zone.sidelobe
-    inside = math.hypot(x - d.x, y - d.y) < d.radius_m
-    return inside == (d.forbidden == "inside")
+                assert off or not zone.contains(x, y), (x, y, t, zone.threat)
 
 
 def plan(scenario: Scenario, cuts: list[Cut]) -> MissionPlan:
