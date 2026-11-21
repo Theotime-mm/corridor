@@ -140,7 +140,6 @@ export function createMapView(container: HTMLElement): MapView {
     map.setLayoutProperty('rf-coverage-line', 'visibility', v(visibility.rf))
     map.setLayoutProperty('rf-safe-baseline', 'visibility', v(visibility.heatmap))
     map.setLayoutProperty('rf-heatmap-cells', 'visibility', v(visibility.heatmap))
-    map.setLayoutProperty('rf-heatmap-layer', 'visibility', v(visibility.heatmap))
   }
 
   map.on('load', () => {
@@ -225,54 +224,12 @@ export function createMapView(container: HTMLElement): MapView {
         source: 'rf-heatmap',
         paint: {
           'fill-color': ['coalesce', ['get', 'color'], '#20c997'],
-          'fill-opacity': ['coalesce', ['get', 'opacity'], 0.35],
-          'fill-antialias': false,
+          'fill-opacity': ['coalesce', ['get', 'opacity'], 0.55],
+          'fill-antialias': true,
         },
       },
       'rf-coverage-fill',
     )
-
-    // 5. Point heatmap layer for smooth atmospheric blur at low zoom
-    map.addLayer({
-      id: 'rf-heatmap-layer',
-      type: 'heatmap',
-      source: 'rf-heatmap',
-      paint: {
-        'heatmap-weight': ['get', 'weight'],
-        'heatmap-intensity': [
-          'interpolate',
-          ['linear'],
-          ['zoom'],
-          8, 0.65,
-          11, 0.85,
-          13, 0.40,
-          15, 0.0, // Fade out Gaussian blur at high zoom so solid polygon cells take over completely
-        ],
-        'heatmap-color': [
-          'interpolate',
-          ['linear'],
-          ['heatmap-density'],
-          0, 'rgba(0, 0, 0, 0)',
-          0.10, 'rgba(32, 201, 151, 0.0)',  // Seamless fade to global safe baseline
-          0.28, 'rgba(32, 201, 151, 0.40)', // Safe green
-          0.48, 'rgba(250, 176, 5, 0.70)',  // Caution yellow
-          0.72, 'rgba(253, 126, 20, 0.85)', // Contention orange
-          1.0, 'rgba(224, 49, 49, 0.95)',   // Denied red
-        ],
-        'heatmap-radius': [
-          'interpolate',
-          ['exponential', 2],
-          ['zoom'],
-          8, 12,
-          10, 28,
-          12, 75,
-          14, 240,
-          16, 780,
-          18, 2500,
-        ],
-        'heatmap-opacity': 0.75,
-      },
-    })
     map.addLayer({
       id: 'rf-coverage-fill',
       type: 'fill',
@@ -313,7 +270,7 @@ export function createMapView(container: HTMLElement): MapView {
     })
     loaded = true
     if (is3dMode) {
-      map.setTerrain({ source: 'terrain-dem', exaggeration: 1.35 })
+      map.setTerrain({ source: 'terrain-dem', exaggeration: 2.8 })
     }
     applyVisibility()
   })
@@ -453,7 +410,7 @@ export function createMapView(container: HTMLElement): MapView {
       is3dMode = enabled
       if (!loaded) return
       if (enabled) {
-        map.setTerrain({ source: 'terrain-dem', exaggeration: 2.2 })
+        map.setTerrain({ source: 'terrain-dem', exaggeration: 2.8 })
         map.easeTo({ pitch: 62, bearing: -20, duration: 800 })
       } else {
         map.setTerrain(null)
