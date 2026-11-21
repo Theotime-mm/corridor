@@ -180,6 +180,13 @@ class Terrain(Model):
         min_length=1,
         description="Flight levels, metres above the ground, lowest first.",
     )
+    mode: Literal["2d", "3d"] = Field(
+        default="2d",
+        description=(
+            "2d: one layer, free-space zones (discs). 3d: the flight levels, zones through the"
+            " terrain, climbs and descents."
+        ),
+    )
 
     @model_validator(mode="after")
     def _levels_rise(self) -> Self:

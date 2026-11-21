@@ -45,7 +45,8 @@ backend/src/corridor/
     events.py     domain events (discriminated union on "type")
     planner/
       masks.py    zones rasterised on the grid, one numpy mask per interval between cut boundaries
-      astar.py    SIPP (safe interval path planning): A* over (cell, safe interval)
+      astar.py    SIPP (safe interval path planning): A* over (cell, level, safe interval)
+      layers.py   the masks of each flight level over time, 2D (one layer) or 3D
       plan.py     plan_route() (one set of cuts), plan_mission() (baseline, optimised, metrics),
                   plan_fallback() (from the drone position in flight, no cut)
       smooth.py   string pulling of the grid route on the same masks: fewer points, never in a zone
@@ -126,7 +127,8 @@ Two kinds of data, kept apart:
     none (jamming zones, pilot link, radars).
   The Copernicus water body mask is not used (not in `backend/data/`); the rule above covers
   rivers narrower than about two cells. The RF endpoints (`/api/rf/*`) use the same file instead of guessing one
-  from the latitude. Not used by the planner yet (3D search and masks to come).
+  from the latitude. `mode`: `2d` (default, one layer, free-space discs) or `3d` (the levels,
+  zones through the terrain, climbs); `scenarios/demo3d.json` is the demo in 3D.
 - A friendly jammer may have a directional `antenna` (`azimuth_deg` clockwise from north,
   `beamwidth_deg` up to 180, `sidelobe_db` up to 0). Its `eirp_w` is then the main beam EIRP.
   Without `antenna` it is omnidirectional. Enemy jammers are omnidirectional for now.
@@ -510,6 +512,21 @@ say which cuts are taken into account. One function covers every case:
 | Optimised route | launch point, departure time | confirmed cuts (`approved`), or scheduled ones too (`preview`) |
 | Fallback (drone late, new enemy threat) | current cell and time | no cut (`fallback`) |
 
+**3D planning** (`terrain.mode: "3d"`, `domain/planner/layers.py`). One layer of time masks per
+flight level. A cell is forbidden at a level by a jammer's 3D zone widened by one cell (zones are
+evaluated at cell centres), an enemy jammer's zone widened further by its 2D position margin
+e * k / |k - 1| in whole cells, or a radar's 2D disc (every level). Zones to avoid stay out;
+friendly zones are off during their shrunk cut windows. SIPP then also moves one level up or
+down in place, at 3 m/s (`CLIMB_MPS`, open decision 39; climbing costs its flight time). The
+search starts at the lowest level (the drone's level for a fallback) and ends over the target
+at any level: near it the lowest level may be jammed, and the last descent is the pilot's.
+Route points carry `alt_m` (0 on the ground). Smoothing pulls lines within one level; a climb
+or descent stays as planned, like a hold. In flight, the safety rule checks the zones at the
+drone's level (both levels during a climb). On the Munich demo: detour 686 s with climbs to
+120 m (646 s in 2D), J3 cut 629 s; a plan takes about 1 to 2 s against 0.1 to 0.5 s in 2D,
+within the 3 s replan allowance. Not yet: the pilot's minimum signal, radars masked by terrain,
+a vertical speed or battery cost of its own for climbing.
+
 **Search: SIPP (safe interval path planning)** (`domain/planner/astar.py`).
 - Grid of 100 m cells, one altitude layer, 8 neighbours at cruise speed (a diagonal takes
   sqrt(2) times as long as a straight move).
@@ -582,7 +599,7 @@ from the jammer outward (64 vertices across the beam, the rest on the sidelobe d
 its zone would be an unbounded wedge that a ring cannot describe. The beam is horizontal only
 (the planner is 2D plus time) and its edge is hard, without gain roll-off.
 
-**3D jamming zones** (`domain/zones3d.py`, not used by the planner yet). For each cell of a
+**3D jamming zones** (`domain/zones3d.py`, used by the planner in `3d` mode). For each cell of a
 mission grid and each flight level, J/S from each jammer on the mission band:
 received power = EIRP toward the cell - free-space loss over the slant distance - diffraction
 loss. Diffraction: terrain profile from the emitter to the cell centre, one sample per cell,
