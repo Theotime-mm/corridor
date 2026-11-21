@@ -22,6 +22,35 @@ def test_demo_scenario_loads(scenario: Scenario) -> None:
     assert isinstance(scenario.enemy_threats[0], EnemyRadar)
 
 
+def test_enemy_radar_threat_loads() -> None:
+    data = {
+        "start_time": "2026-11-21T14:00:00Z",
+        "js_threshold_db": 0,
+        "reference_link": {"eirp_w": 10, "range_m": 5000},
+        "command_callsign": "CMD",
+        "friendly_jammers": [],
+        "enemy_threats": [
+            {"type": "radar", "id": "R1", "pos": {"lat": 48.0, "lon": 11.0}, "radius_m": 2000}
+        ],
+        "missions": [
+            {
+                "id": "M1",
+                "drone_id": "UAV-1",
+                "pilot_callsign": "PILOT-1",
+                "launch": {"lat": 48.0, "lon": 11.0},
+                "target": {"lat": 48.1, "lon": 11.1},
+                "band": "2.4GHz",
+                "link_eirp_w": 10,
+                "cruise_speed_mps": 15,
+                "battery_max_s": 1800,
+                "departure_s": 600,
+            }
+        ],
+    }
+    s = Scenario.model_validate(data)
+    assert isinstance(s.enemy_threats[0], EnemyRadar)
+
+
 def test_clock_label_uses_start_time(scenario: Scenario) -> None:
     assert scenario.clock_label(15 * 60 + 30) == "14:15:30"
 

@@ -47,8 +47,9 @@ export function initialCallsign(): string {
 /** Commands that take an actor get the connected callsign. */
 type WithoutActor<T> = T extends unknown ? Omit<T, 'actor'> : never
 
-export function send(command: WithoutActor<Command>): void {
-  const actor = useStore.getState().callsign
+/** `as` overrides the callsign: demo controls act for a given role. */
+export function send(command: WithoutActor<Command>, as?: string): void {
+  const actor = as ?? useStore.getState().callsign ?? ''
   const reqId = socket.send({ ...command, actor } as Command)
   if (reqId === null) useStore.getState().setError('not connected to corridor-server')
 }
