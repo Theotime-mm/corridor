@@ -2,10 +2,11 @@
 
 Times are simulated seconds from ``start_time``. Jammers are described by their power: the
 zone they deny is computed from the J/S ratio against the pilot link (``corridor.domain.zones``).
-A jammer only matters to the mission if its ``bands`` contain the mission ``band``. Radars are
-discs (``radius_m``) and block every band. Friendly jammers are on except during cuts. ``cuts``
-in the file are cuts already scheduled at start; they still need the operator's confirmation,
-like any other cut.
+A friendly jammer may have a directional ``antenna``; without one it radiates the same power in
+every direction. A jammer only matters to the mission if its ``bands`` contain the mission
+``band``. Radars are discs (``radius_m``) and block every band. Friendly jammers are on except
+during cuts. ``cuts`` in the file are cuts already scheduled at start; they still need the
+operator's confirmation, like any other cut.
 """
 
 from __future__ import annotations
@@ -33,12 +34,31 @@ class PlannedCut(Model):
         return self
 
 
+class Antenna(Model):
+    """Directional antenna, seen from above: a main beam with a hard edge, sidelobes elsewhere.
+
+    The cone is horizontal only: the planner is 2D plus time.
+    """
+
+    azimuth_deg: float = Field(
+        ge=0, lt=360, description="Axis of the main beam, degrees clockwise from north."
+    )
+    beamwidth_deg: float = Field(gt=0, le=180, description="Full width of the main beam.")
+    sidelobe_db: float = Field(
+        le=0, description="Gain outside the main beam, relative to the main beam (e.g. -20)."
+    )
+
+
 class FriendlyJammer(Model):
     id: str
     operator_callsign: str
     pos: Position
-    eirp_w: float = Field(gt=0, description="Effective isotropic radiated power, watts.")
+    eirp_w: float = Field(
+        gt=0,
+        description="Effective isotropic radiated power, watts; in the main beam if `antenna`.",
+    )
     bands: list[str] = Field(min_length=1)
+    antenna: Antenna | None = Field(default=None, description="None: omnidirectional.")
     cuts: list[PlannedCut] = Field(default_factory=list)
 
     @model_validator(mode="after")

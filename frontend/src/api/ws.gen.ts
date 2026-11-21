@@ -98,13 +98,25 @@ export type OperatorCallsign = string;
 export type Lat1 = number;
 export type Lon1 = number;
 /**
- * Effective isotropic radiated power, watts.
+ * Effective isotropic radiated power, watts; in the main beam if `antenna`.
  */
 export type EirpW = number;
 /**
  * @minItems 1
  */
 export type Bands = [string, ...string[]];
+/**
+ * Axis of the main beam, degrees clockwise from north.
+ */
+export type AzimuthDeg = number;
+/**
+ * Full width of the main beam.
+ */
+export type BeamwidthDeg = number;
+/**
+ * Gain outside the main beam, relative to the main beam (e.g. -20).
+ */
+export type SidelobeDb = number;
 export type StartS2 = number;
 export type EndS2 = number;
 export type Cuts = PlannedCut[];
@@ -409,6 +421,10 @@ export interface FriendlyJammer {
   pos: Position;
   eirp_w: EirpW;
   bands: Bands;
+  /**
+   * None: omnidirectional.
+   */
+  antenna: Antenna | null;
   cuts: Cuts;
 }
 /**
@@ -418,6 +434,19 @@ export interface FriendlyJammer {
 export interface Position {
   lat: Lat1;
   lon: Lon1;
+}
+/**
+ * Directional antenna, seen from above: a main beam with a hard edge, sidelobes elsewhere.
+ *
+ * The cone is horizontal only: the planner is 2D plus time.
+ *
+ * This interface was referenced by `CorridorWs`'s JSON-Schema
+ * via the `definition` "Antenna".
+ */
+export interface Antenna {
+  azimuth_deg: AzimuthDeg;
+  beamwidth_deg: BeamwidthDeg;
+  sidelobe_db: SidelobeDb;
 }
 /**
  * This interface was referenced by `CorridorWs`'s JSON-Schema

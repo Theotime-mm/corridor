@@ -34,7 +34,7 @@ backend/src/corridor/
     model.py      pydantic base class shared by every model that crosses a boundary
     geo.py        Position, LocalFrame (lat/lon <-> metres), Grid (cell lookup, covering grid)
     scenario.py   Scenario and its parts, consistency checks, JSON loader
-    zones.py      J/S zones (circles of Apollonius), radar discs, planning grid
+    zones.py      J/S zones (circles of Apollonius, directional beams), radar discs, planning grid
     state.py      Cut, ClockState, WorldState (runtime state)
     commands.py   domain commands (discriminated union on "type")
     events.py     domain events (discriminated union on "type")
@@ -55,6 +55,7 @@ backend/src/corridor/
       schema.py   corridor-schema: JSON Schema export
   tak/            CoT client and encoders, unchanged; moves to adapters/tak with the TAK adapter
 backend/scenarios/demo.json   demo scenario (J3 between pilot and target, radar to the side, enemy jammer)
+backend/scenarios/directional.json   the demo with J3 directional (60° beam to the north, -20 dB sidelobes)
 schema/ws.schema.json         generated protocol schema (repository root), consumed by the front end
 ```
 
@@ -96,6 +97,9 @@ Two kinds of data, kept apart:
   time field ends in `_s`.
 - Jammers are described by their EIRP (effective isotropic radiated power); the zone they deny
   comes from the J/S (jammer to signal) model below. Radars are discs (`radius_m`).
+- A friendly jammer may have a directional `antenna` (`azimuth_deg` clockwise from north,
+  `beamwidth_deg` up to 180, `sidelobe_db` up to 0). Its `eirp_w` is then the main beam EIRP.
+  Without `antenna` it is omnidirectional. Enemy jammers are omnidirectional for now.
 - Friendly jammers are on except during cuts. `cuts` in the file are cuts already scheduled at
   start: they begin as `scheduled` and still need the operator's confirmation. Other cuts are
   created live with `cut.schedule`.
@@ -250,7 +254,16 @@ where ds / dj >= k with k = sqrt(t Ps / Pj). The boundary is a circle of Apollon
 The pilot stands at the launch point, so the zones are fixed for a mission and computed once.
 Jammers whose bands do not contain the mission band have no zone. Zones go to the front (and
 later to TAK) as rings of 64 points with the forbidden side; neither needs to know the model.
-Antenna patterns or terrain would change the shapes, not the contract.
+Terrain would change the shapes, not the contract.
+
+**Directional jammers.** A jammer with an `antenna` has two EIRPs: `eirp_w` inside the main
+beam (a horizontal sector with a hard edge), `eirp_w × 10^(sidelobe_db / 10)` elsewhere. Its
+zone is the main Apollonius disc inside the beam and the sidelobe disc outside it. With k > 1
+both discs contain the jammer, so the zone is star-shaped around it and the ring is sampled
+from the jammer outward (64 vertices across the beam, the rest on the sidelobe disc). The
+`Zone` contract does not change. A directional jammer with k < 1 is rejected at server start:
+its zone would be an unbounded wedge that a ring cannot describe. The beam is horizontal only
+(the planner is 2D plus time) and its edge is hard, without gain roll-off.
 
 **Forbidden cells.** Cuts are piecewise constant in time, so `masks.py` precomputes one mask per
 interval between cut boundaries with numpy, not one per time step. A cell is forbidden when it
@@ -261,7 +274,10 @@ lies on the forbidden side of:
 - a radar disc (hard ban).
 
 The test runs on the cell centre with the boundary pushed out by half the cell diagonal, so a
-cell is forbidden as soon as any part of it may touch a zone.
+cell is forbidden as soon as any part of it may touch a zone. For a directional jammer, a cell
+counts for the main disc if it may touch both that disc and the beam (centre inside, or within
+half a diagonal of an edge ray), and for the sidelobe disc if it may touch both that disc and
+the outside of the beam. This may forbid a few cells too many, never too few.
 
 **Demo calibration, for the jury.** `backend/scenarios/demo.json` uses a 0 dB threshold, a control link
 of 10 W EIRP toward the operating area (for example 1 W behind a 10 dBi ground antenna, assuming
@@ -411,4 +427,5 @@ The defaults below do not change the layout; they live in the planner or in `saf
 | Plan shown while a replan runs | the previous plan stays (in the snapshot too) until the new one arrives, about 1 to 2 s; after a `cut.cancel` it may cross the cancelled cut; if the worker fails it stays, only logged |
 | Launch on a `preview` plan | accepted today; to gate in `safety.py` |
 | Replan lead time | 3 wall-clock seconds (`PLAN_LEAD_WALL_S`); two queued plans can exceed it |
+| Directional jammers | hard beam edge, sidelobes required (`sidelobe_db`), friendly jammers only, k < 1 rejected, not used in `demo.json` |
 | Planner choices made in step 3 | SIPP and a 30 s / 5 s takeoff sweep, cuts must save more than 1 s, cells forbidden if any part may touch a zone, radar is a hard ban, margins 30 s / 60 s as constants in `plan.py` |
