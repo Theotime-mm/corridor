@@ -44,6 +44,7 @@ backend/src/corridor/
       astar.py    SIPP (safe interval path planning): A* over (cell, safe interval)
       plan.py     plan_route() (one set of cuts), plan_mission() (baseline, optimised, metrics),
                   plan_fallback() (from the drone position in flight, no cut)
+      smooth.py   string pulling of the grid route on the same masks: fewer points, never in a zone
     safety.py     Flight (route, delay, holds, battery), safety rule, cut start/end transitions
   engine/
     clock.py      SimClock: accelerated clock with an injectable wall-clock source
@@ -497,6 +498,20 @@ narrower than 30 s can be missed. Each search stops once its lower bound passes 
 time found so far. A `plan_mission` takes about 0.3 to 1.7 s on the demo. A hover over the launch cell is turned into ground wait. Routes that exceed
 `battery_max_s` of flight are rejected.
 
+**Smoothing** (`domain/planner/smooth.py`). The SIPP route moves between cell centres in 8
+directions: across open ground it is a staircase. Every route the planner returns (baseline,
+approved, preview, fallback) is smoothed on the masks it was searched on:
+- From each kept point, jump to the farthest later point reachable in a straight line at cruise
+  speed through cells that are free the whole time the drone is in them, corners the line only
+  touches included (as SIPP never cuts a forbidden corner). Same masks, so same margins.
+- A straight line is never longer than the staircase, so every point is reached no later than
+  planned. Holds (hovers waiting for a cut) are never skipped and keep their departure time, so
+  the crossing keeps its window.
+- If a point would be reached too early (a cut zone not open yet), the drone waits there until
+  its planned departure; before the first hold, the take-off is then pushed back to turn that
+  wait into ground time. If even that is not clear, the route stays as SIPP planned it.
+- Flight times and metrics are those of the smoothed route, so plan comparison uses them too.
+
 **Statuses** (`plan_mission`). Baseline: no cut. Then the best route on confirmed cuts
 (`approved` if it saves more than 1 s), then on every cut (`preview` if it saves more than the
 approved or baseline one). Otherwise `baseline`. `fallback`: `plan_fallback`, from the drone
@@ -556,10 +571,11 @@ round figure. With realistic powers (50 W jammer, 1 W link) k < 1 and no detour 
 demo deliberately shows the case where a detour is possible, to compare it with waiting for a
 cut.
 
-Measured on the demo (departure 600 s, 1800 s of battery): the baseline takes the south
-corridor, 681 s of flight (38 %). A J3 cut from 900 s to 1260 s leaves a 270 s window after the
-margins, shorter than the 308 s of a straight crossing: the route crosses J3 off-axis and saves
-about 10 %. A cut of 600 s (900 s to 1500 s) gives a straight crossing and saves about 20 %.
+Measured on the demo (departure 600 s, 1800 s of battery), smoothed routes: the baseline takes
+the south corridor, 646 s of flight (36 %, 7 points; 681 s and 21 points before smoothing). A
+J3 cut from 900 s to 1260 s leaves a 270 s window after the margins, shorter than the 308 s of a
+straight crossing: the route crosses J3 off-axis and saves about 9 % (5 points). A cut of 600 s
+(900 s to 1500 s) gives a straight crossing and saves about 17 % (3 points).
 The cut length is a demo tuning choice.
 
 When no route exists without a cut (the k < 1 case), `plan_mission` returns None for now: the
@@ -721,4 +737,5 @@ The defaults below do not change the layout; they live in the planner or in `saf
 | Battery left for a fallback | `plan_fallback` allows a full `battery_max_s`; the battery already used is not deducted |
 | Replan lead time | 3 wall-clock seconds (`PLAN_LEAD_WALL_S`); two queued plans can exceed it |
 | Directional jammers | hard beam edge, sidelobes required (`sidelobe_db`), friendly jammers only, k < 1 rejected, not used in `demo.json` |
+| Route smoothing | greedy string pulling, farthest point first, between the points of the SIPP route only (a better line through the middle of a straight run can be missed); holds kept |
 | Planner choices made in step 3 | SIPP and a 30 s / 5 s takeoff sweep, cuts must save more than 1 s, cells forbidden if any part may touch a zone, radar is a hard ban, margins 30 s / 60 s as constants in `plan.py` |
