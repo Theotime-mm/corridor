@@ -43,6 +43,7 @@ from corridor.domain.commands import (
     RequestMission,
     ScheduleCut,
     SetClock,
+    UpdateMission,
 )
 from corridor.domain.events import (
     ClockChanged,
@@ -54,6 +55,7 @@ from corridor.domain.events import (
     JammerRestarted,
     MissionCreated,
     MissionStatusChanged,
+    MissionUpdated,
     Notification,
     NotificationAction,
     PlanUpdated,
@@ -182,6 +184,8 @@ class Engine:
             case RequestMission():
                 created = next(e.mission for e in events if isinstance(e, MissionCreated))
                 self.request_plans([created.id])
+            case UpdateMission():
+                self.request_plans([command.mission])
             case AddThreat() | RemoveThreat():
                 change = next(e for e in events if isinstance(e, ThreatAdded | ThreatRemoved))
                 self.request_plans(change.missions)
@@ -363,6 +367,8 @@ class Engine:
                 return self._confirm_cut(command)
             case RequestMission():
                 return self._request_mission(command)
+            case UpdateMission():
+                return self._update_mission(command)
             case LaunchMission():
                 return self._launch_mission(command)
             case InjectDelay():
@@ -473,6 +479,39 @@ class Engine:
         self.state.missions[mission.id] = "planned"
         text = f"Mission {mission.id} created for {mission.drone_id}, computing the route."
         return [MissionCreated(mission=mission), Notification(to=pilot.callsign, text=text)]
+
+    def _update_mission(self, command: UpdateMission) -> list[Event]:
+        runtime = self._runtime(command.mission)
+        mission = runtime.mission
+        if command.actor not in (mission.pilot_callsign, self.scenario.command_callsign):
+            raise CommandRejected(f"only the pilot of {mission.id} or the command can change it")
+        status = self.state.missions[mission.id]
+        if status != "planned":
+            raise CommandRejected(f"mission {mission.id} is already {status}")
+        updated = mission.model_copy(
+            update={
+                "launch": command.launch,
+                "target": command.target,
+                "departure_s": command.departure_s,
+            }
+        )
+        try:
+            fresh = self._runtime_for(updated)
+        except ValueError as exc:
+            raise CommandRejected(f"no zones for this mission: {exc}") from exc
+        # In place, revision kept: a plan still on its way for the old points is dropped.
+        runtime.mission = updated
+        runtime.constraints = fresh.constraints
+        runtime.frame = fresh.frame
+        runtime.shapes = fresh.shapes
+        runtime.plan = None
+        self.scenario = self.scenario.model_copy(
+            update={
+                "missions": [updated if m.id == mission.id else m for m in self.scenario.missions]
+            }
+        )
+        text = f"Mission {mission.id} changed by {command.actor}, computing the new route."
+        return [MissionUpdated(mission=updated), Notification(to=mission.pilot_callsign, text=text)]
 
     def _next_mission_id(self) -> str:
         """``M<n>``, skipping ids the scenario already uses."""

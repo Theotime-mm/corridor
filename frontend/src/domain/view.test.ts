@@ -3,9 +3,13 @@ import type { Cut, Grid, Position, RoutePoint, Zone } from '../api/protocol'
 import {
   bearingDeg,
   clockLabel,
+  distanceM,
+  formatPosition,
   friendlyZoneState,
   gridBounds,
   inForbidden,
+  nextClockTime,
+  parsePosition,
   positionAt,
   routePhases,
 } from './view'
@@ -155,5 +159,32 @@ describe('domain/view', () => {
       expect(phases.length).toBeGreaterThan(0)
       expect(phases[0].kind).toBe('ground')
     })
+  })
+})
+
+describe('mission request helpers', () => {
+  const start = '2026-11-21T14:00:00Z'
+
+  it('measures great-circle distance', () => {
+    // 0.1 degree of latitude is about 11.1 km anywhere.
+    expect(distanceM({ lat: 48.0, lon: 11.0 }, { lat: 48.1, lon: 11.0 })).toBeCloseTo(11_119, -1)
+  })
+
+  it('parses pasted coordinates and rejects the rest', () => {
+    expect(parsePosition(' 48.1234, 11.5678 ')).toEqual({ lat: 48.1234, lon: 11.5678 })
+    expect(parsePosition('48.1 11.5')).toEqual({ lat: 48.1, lon: 11.5 })
+    expect(parsePosition('48.1')).toBeNull()
+    expect(parsePosition('95, 11')).toBeNull()
+    expect(parsePosition('abc, 11')).toBeNull()
+    expect(formatPosition({ lat: 48.1, lon: 11.5 })).toBe('48.10000, 11.50000')
+  })
+
+  it('turns a clock time into the next simulated time', () => {
+    expect(nextClockTime(start, 600, '14:30')).toBe(1800)
+    // 14:05 has passed at 14:10: it means tomorrow.
+    expect(nextClockTime(start, 600, '14:05')).toBe(300 + 86_400)
+    expect(nextClockTime(start, 600, '9:00')).toBe(19 * 3600)
+    expect(nextClockTime(start, 600, '25:00')).toBeNull()
+    expect(nextClockTime(start, 600, 'soon')).toBeNull()
   })
 })

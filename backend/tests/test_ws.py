@@ -264,3 +264,32 @@ def test_rf_endpoints_without_any_mission(scenario: Scenario) -> None:
     client = TestClient(create_app(Scenario.model_validate(data), clock_factor=20, cell_m=100))
     assert client.get("/api/rf/coverage").status_code == 200
     assert client.get("/api/rf/probe?lat=48.145&lon=11.55").status_code == 404
+
+
+def test_an_updated_mission_resyncs_every_client(two_missions: Scenario) -> None:
+    """M2 moves from J4 onto J3: J4's operator loses it, J3's operator gains it."""
+    client = TestClient(create_app(two_missions, clock_factor=20, cell_m=100))
+    m1 = two_missions.missions[0].model_dump(mode="json")
+    with (
+        client.websocket_connect("/ws?callsign=PILOT-2") as pilot,
+        client.websocket_connect("/ws?callsign=EW-J4") as old_operator,
+        client.websocket_connect("/ws?callsign=EW-J3") as new_operator,
+    ):
+        receive(pilot), receive(old_operator), receive(new_operator)
+        update = {"type": "mission.update", "actor": "PILOT-2", "mission": "M2"}
+        points = {"launch": m1["launch"], "target": m1["target"], "departure_s": 600}
+        pilot.send_json({"req_id": "r1", "command": update | points})
+
+        updated, after = receive(pilot)["payload"], receive(pilot)["payload"]
+        assert updated["type"] == "mission.updated"
+        (m2,) = after["missions"]
+        assert m2["constraints"]["jammers"] == ["J3"]
+        assert m2["plan"] is None
+
+        # The old operator gets no event but a snapshot without M2.
+        lost = receive(old_operator)["payload"]
+        assert lost["type"] == "snapshot"
+        assert [m["constraints"]["mission"] for m in lost["missions"]] == []
+        gained = [receive(new_operator)["payload"] for _ in range(2)]
+        assert [p["type"] for p in gained] == ["mission.updated", "snapshot"]
+        assert [m["constraints"]["mission"] for m in gained[1]["missions"]] == ["M1", "M2"]

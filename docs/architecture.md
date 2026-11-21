@@ -46,6 +46,7 @@ backend/src/corridor/
       astar.py    SIPP (safe interval path planning): A* over (cell, safe interval)
       plan.py     plan_route() (one set of cuts), plan_mission() (baseline, optimised, metrics),
                   plan_fallback() (from the drone position in flight, no cut)
+      smooth.py   string pulling of the grid route on the same masks: fewer points, never in a zone
     safety.py     Flight (route, delay, holds, battery), safety rule, cut start/end transitions
   engine/
     clock.py      SimClock: accelerated clock with an injectable wall-clock source
@@ -431,6 +432,7 @@ Rules enforced today:
 | `cut.confirm` | unknown cut, already confirmed, actor is not the jammer operator |
 | `cut.cancel` | unknown cut |
 | `mission.request` | actor is not a pilot |
+| `mission.update` | unknown mission, mission not in `planned`, actor is neither its pilot nor the command |
 | `mission.launch` | unknown mission, mission not in `planned`, actor is neither its pilot nor the command |
 | `inject.delay` | unknown mission, no drone in flight |
 | `threat.add` | actor is not the command; fields not matching the kind (pydantic); a zone the J/S model cannot draw (jammer on a pilot) |
@@ -447,7 +449,9 @@ Rules enforced today:
   count per mission.
 - Missions: a pilot's `mission.request` builds a mission from its drone, computes its
   constraints on the spot (same grid rules as at startup), adds it to `scenario.missions` and
-  requests its first plan.
+  requests its first plan. `mission.update` moves the launch and target (and departure) of a
+  mission still `planned`: same constraints rebuilt in place, plan dropped, new plan requested
+  with the next revision, so a plan still on its way for the old points is dropped.
 - Threats: `threat.add` and `threat.remove` (command only) change `scenario.enemy_threats`
   and recompute the constraints of every mission (zones, grid, concerned threats). The missions
   the threat concerns (after an add, before a remove) get a new plan while `planned`. A drone in
@@ -516,6 +520,20 @@ narrower than 30 s can be missed. Each search stops once its lower bound passes 
 time found so far. A `plan_mission` takes about 0.3 to 1.7 s on the demo. A hover over the launch cell is turned into ground wait. Routes that exceed
 `battery_max_s` of flight are rejected.
 
+**Smoothing** (`domain/planner/smooth.py`). The SIPP route moves between cell centres in 8
+directions: across open ground it is a staircase. Every route the planner returns (baseline,
+approved, preview, fallback) is smoothed on the masks it was searched on:
+- From each kept point, jump to the farthest later point reachable in a straight line at cruise
+  speed through cells that are free the whole time the drone is in them, corners the line only
+  touches included (as SIPP never cuts a forbidden corner). Same masks, so same margins.
+- A straight line is never longer than the staircase, so every point is reached no later than
+  planned. Holds (hovers waiting for a cut) are never skipped and keep their departure time, so
+  the crossing keeps its window.
+- If a point would be reached too early (a cut zone not open yet), the drone waits there until
+  its planned departure; before the first hold, the take-off is then pushed back to turn that
+  wait into ground time. If even that is not clear, the route stays as SIPP planned it.
+- Flight times and metrics are those of the smoothed route, so plan comparison uses them too.
+
 **Statuses** (`plan_mission`). Baseline: no cut. Then the best route on confirmed cuts
 (`approved` if it saves more than 1 s), then on every cut (`preview` if it saves more than the
 approved or baseline one). Otherwise `baseline`. `fallback`: `plan_fallback`, from the drone
@@ -575,10 +593,11 @@ round figure. With realistic powers (50 W jammer, 1 W link) k < 1 and no detour 
 demo deliberately shows the case where a detour is possible, to compare it with waiting for a
 cut.
 
-Measured on the demo (departure 600 s, 1800 s of battery): the baseline takes the south
-corridor, 681 s of flight (38 %). A J3 cut from 900 s to 1260 s leaves a 270 s window after the
-margins, shorter than the 308 s of a straight crossing: the route crosses J3 off-axis and saves
-about 10 %. A cut of 600 s (900 s to 1500 s) gives a straight crossing and saves about 20 %.
+Measured on the demo (departure 600 s, 1800 s of battery), smoothed routes: the baseline takes
+the south corridor, 646 s of flight (36 %, 7 points; 681 s and 21 points before smoothing). A
+J3 cut from 900 s to 1260 s leaves a 270 s window after the margins, shorter than the 308 s of a
+straight crossing: the route crosses J3 off-axis and saves about 9 % (5 points). A cut of 600 s
+(900 s to 1500 s) gives a straight crossing and saves about 17 % (3 points).
 The cut length is a demo tuning choice.
 
 When no route exists without a cut (the k < 1 case), `plan_mission` returns None for now: the
@@ -647,8 +666,10 @@ Server to client:
 - A reconnect gets a fresh `snapshot`, so no client-side resync logic is needed.
 - `mission.created` is followed, for every client that sees the mission, by a fresh `snapshot`:
   the mission may bring jammers, threats and cuts into its view. The client just replaces its
-  state, as on connect. `threat.added` and `threat.removed` work the same way, for the command
-  and every client that sees one of the missions the threat concerns.
+  state, as on connect. `mission.updated` is followed by a fresh `snapshot` for every client:
+  the mission may also leave a view (an operator whose jammer it no longer crosses).
+  `threat.added` and `threat.removed` work like `mission.created`, for the command and every
+  client that sees one of the missions the threat concerns.
 
 **`plan.updated`**
 
@@ -681,6 +702,7 @@ Server to client:
 | `clock` | done | sim time, factor, paused; on change only |
 | `cut.scheduled`, `cut.confirmed`, `cut.cancelled` | done | the cut (`requested_for`: the mission it was asked for, if any) |
 | `mission.created` | done | the full mission (drone fields from the pilot); a new `snapshot` follows, then a notification to the pilot and the first `plan.updated` |
+| `mission.updated` | done | the mission with its new points and departure; a new `snapshot` follows for every client (plan back to null until the next `plan.updated`) |
 | `threat.added`, `threat.removed` | done | the threat (or its id) and the missions it concerns; a new `snapshot` follows, then notifications to the command and the pilots, then the new `plan.updated` |
 | `mission.status` | done | mission id; `planned`, `flying`, `arrived` |
 | `notification` | done | `to` (callsign), text, optional action (the button to show and the cut it confirms) |
@@ -697,6 +719,7 @@ Server to client:
 | `cut.cancel` | done | cut id |
 | `cut.confirm` | done | cut id |
 | `mission.request` | done | `launch`, `target`, `departure_s` (a past one means as soon as possible); the mission id is `M<n>`, the first one free |
+| `mission.update` | done | mission id, `launch`, `target`, `departure_s`; only while `planned` |
 | `mission.launch` | done | mission id |
 | `clock.set` | done | factor and/or paused |
 | `inject.delay` | done | mission id, `delay_s`: hold the flying drone where it is (demo twist) |
@@ -743,4 +766,5 @@ The defaults below do not change the layout; they live in the planner or in `saf
 | Battery left for a fallback | `plan_fallback` allows a full `battery_max_s`; the battery already used is not deducted |
 | Replan lead time | 3 wall-clock seconds (`PLAN_LEAD_WALL_S`); two queued plans can exceed it |
 | Directional jammers | hard beam edge, sidelobes required (`sidelobe_db`), friendly jammers only, k < 1 rejected, not used in `demo.json` |
+| Route smoothing | greedy string pulling, farthest point first, between the points of the SIPP route only (a better line through the middle of a straight run can be missed); holds kept |
 | Planner choices made in step 3 | SIPP and a 30 s / 5 s takeoff sweep, cuts must save more than 1 s, cells forbidden if any part may touch a zone, radar is a hard ban, margins 30 s / 60 s as constants in `plan.py` |

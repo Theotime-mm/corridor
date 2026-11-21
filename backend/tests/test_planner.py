@@ -1,5 +1,6 @@
 import itertools
 import math
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -382,3 +383,13 @@ def test_route_clears_every_possible_position_of_an_uncertain_enemy(scenario: Sc
         data["enemy_threats"][1]["pos"] = moved.model_dump(mode="json")
         zone = next(z for z in shapes_of(Scenario.model_validate(data)) if z.threat == "E1")
         assert not any(zone.contains(x, y) for x, y in samples), angle
+
+
+@pytest.mark.parametrize("cuts", [[], [cut("J3", 900, 1260)]], ids=["detour", "through J3"])
+def test_smoothing_shortens_the_route_and_drops_points(scenario: Scenario, cuts: list[Cut]) -> None:
+    smoothed = plan(scenario, cuts).optimised_route  # clear of the exact zones, see plan()
+    with mock.patch("corridor.domain.planner.plan.smooth_route", lambda route, *_, **__: route):
+        grid_route = plan(scenario, cuts).optimised_route
+    assert len(smoothed) < len(grid_route)
+    assert flight_s(smoothed) < flight_s(grid_route)
+    assert smoothed[-1].t <= grid_route[-1].t

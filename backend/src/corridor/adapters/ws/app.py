@@ -6,7 +6,9 @@ callsign is closed with code ``4003``. Each client gets the snapshot and the eve
 but the filter would be decorative if any client could act under another callsign.
 
 A ``mission.created`` event is followed by a new snapshot for every client that sees it: the
-mission may bring jammers, threats and cuts into view that the client never received.
+mission may bring jammers, threats and cuts into view that the client never received. A
+``mission.updated`` one is followed by a new snapshot for every client: the mission may also
+leave a view (an operator whose jammer it no longer crosses).
 """
 
 from __future__ import annotations
@@ -24,7 +26,13 @@ from pydantic import ValidationError
 from corridor.adapters.ws.audience import Audience, Viewer
 from corridor.adapters.ws.hub import Hub, Outbox
 from corridor.adapters.ws.schemas import Ack, ClientMessage, Error, MissionView, Snapshot
-from corridor.domain.events import Event, MissionCreated, ThreatAdded, ThreatRemoved
+from corridor.domain.events import (
+    Event,
+    MissionCreated,
+    MissionUpdated,
+    ThreatAdded,
+    ThreatRemoved,
+)
 from corridor.domain.geo import Position
 from corridor.domain.rf.coverage import (
     ContourLevel,
@@ -180,8 +188,14 @@ def create_app(
 
     def on_event(event: Event) -> None:
         hub.publish(event)
+
+        def snapshot_for(viewer: Viewer) -> Snapshot:
+            return snapshot(engine, audience, viewer)
+
         if isinstance(event, MissionCreated | ThreatAdded | ThreatRemoved):
-            hub.resync(event, lambda viewer: snapshot(engine, audience, viewer))
+            hub.resync(snapshot_for, lambda viewer: audience.sees(viewer, event))
+        elif isinstance(event, MissionUpdated):
+            hub.resync(snapshot_for, lambda _: True)
 
     engine.subscribe(on_event)
 

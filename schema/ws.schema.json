@@ -232,6 +232,7 @@
               "inject.delay": "#/$defs/InjectDelay",
               "mission.launch": "#/$defs/LaunchMission",
               "mission.request": "#/$defs/RequestMission",
+              "mission.update": "#/$defs/UpdateMission",
               "threat.add": "#/$defs/AddThreat",
               "threat.remove": "#/$defs/RemoveThreat"
             },
@@ -249,6 +250,9 @@
             },
             {
               "$ref": "#/$defs/RequestMission"
+            },
+            {
+              "$ref": "#/$defs/UpdateMission"
             },
             {
               "$ref": "#/$defs/LaunchMission"
@@ -1027,6 +1031,27 @@
       "title": "MissionStatusChanged",
       "type": "object"
     },
+    "MissionUpdated": {
+      "additionalProperties": false,
+      "description": "A mission on the ground got new points or a new departure; its plan is dropped and a\nnew one requested. Every client gets a new snapshot right after: the mission may enter or\nleave its view.",
+      "properties": {
+        "type": {
+          "const": "mission.updated",
+          "default": "mission.updated",
+          "title": "Type",
+          "type": "string"
+        },
+        "mission": {
+          "$ref": "#/$defs/Mission"
+        }
+      },
+      "required": [
+        "type",
+        "mission"
+      ],
+      "title": "MissionUpdated",
+      "type": "object"
+    },
     "MissionView": {
       "additionalProperties": false,
       "properties": {
@@ -1633,6 +1658,7 @@
                   "jammer.restarted": "#/$defs/JammerRestarted",
                   "mission.created": "#/$defs/MissionCreated",
                   "mission.status": "#/$defs/MissionStatusChanged",
+                  "mission.updated": "#/$defs/MissionUpdated",
                   "notification": "#/$defs/Notification",
                   "plan.updated": "#/$defs/PlanUpdated",
                   "threat.added": "#/$defs/ThreatAdded",
@@ -1655,6 +1681,9 @@
                 },
                 {
                   "$ref": "#/$defs/MissionCreated"
+                },
+                {
+                  "$ref": "#/$defs/MissionUpdated"
                 },
                 {
                   "$ref": "#/$defs/ThreatAdded"
@@ -1932,6 +1961,48 @@
         "missions"
       ],
       "title": "ThreatRemoved",
+      "type": "object"
+    },
+    "UpdateMission": {
+      "additionalProperties": false,
+      "description": "Move the launch or target of a mission still on the ground, or change its departure.\n\nSame rights as launch: its pilot or the command post.",
+      "properties": {
+        "type": {
+          "const": "mission.update",
+          "default": "mission.update",
+          "title": "Type",
+          "type": "string"
+        },
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "mission": {
+          "title": "Mission",
+          "type": "string"
+        },
+        "launch": {
+          "$ref": "#/$defs/Position"
+        },
+        "target": {
+          "$ref": "#/$defs/Position"
+        },
+        "departure_s": {
+          "description": "Earliest departure; one in the past means as soon as possible.",
+          "minimum": 0,
+          "title": "Departure S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "actor",
+        "mission",
+        "launch",
+        "target",
+        "departure_s"
+      ],
+      "title": "UpdateMission",
       "type": "object"
     },
     "Viewer": {
