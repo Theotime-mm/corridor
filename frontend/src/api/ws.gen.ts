@@ -218,7 +218,7 @@ export type Mission9 = string;
  * Grows by one per plan request of this mission.
  */
 export type Revision = number;
-export type Status2 = "preview" | "approved" | "fallback" | "baseline";
+export type Status2 = "preview" | "approved" | "fallback" | "baseline" | "straight";
 /**
  * Of battery_max_s.
  */

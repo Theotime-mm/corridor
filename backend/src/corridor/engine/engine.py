@@ -68,7 +68,7 @@ from corridor.domain.events import (
 )
 from corridor.domain.geo import LocalFrame
 from corridor.domain.planner.layers import forbidden_cells
-from corridor.domain.planner.plan import MissionPlan
+from corridor.domain.planner.plan import MissionPlan, route_metrics
 from corridor.domain.safety import (
     Flight,
     LevelCells,
@@ -915,10 +915,27 @@ class Engine:
                 raise CommandRejected("the plan relies on a cut not confirmed yet")
             else:
                 route = plan.optimised_route
+            revision = plan.revision
+            if through:
+                # The plan becomes the route flown, so every view (map, mission card, altitude
+                # profile, a client joining later) shows the straight route, not the detour.
+                runtime.revision += 1
+                revision = runtime.revision
+                runtime.plan = plan.model_copy(
+                    update={
+                        "revision": revision,
+                        "status": "straight",
+                        "optimised_route": route,
+                        "metrics": route_metrics(mission, plan.baseline_route, route),
+                        "profile": profile(self.scenario.terrain, route),
+                        "choices": [],
+                    }
+                )
+                events.append(runtime.plan)
             # Launched after the planned take-off: the flight starts late by the difference.
             late = max(0.0, self.clock.now() - takeoff_s(route))
             runtime.flight = Flight(
-                route=route, revision=plan.revision, delay_s=late, through_jammers=through
+                route=route, revision=revision, delay_s=late, through_jammers=through
             )
         self.state.missions[mission.id] = "flying"
         return [*events, MissionStatusChanged(mission=mission.id, status="flying")]

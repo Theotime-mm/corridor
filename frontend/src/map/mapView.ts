@@ -103,6 +103,7 @@ export const ROUTE_COLORS: Record<PlanUpdated['status'], string> = {
   approved: COLORS.optimised,
   preview: COLORS.preview,
   fallback: COLORS.fallback,
+  straight: COLORS.preview,
 }
 
 type FC = FeatureCollection

@@ -15,6 +15,7 @@ const PLAN_TEXT: Record<PlanUpdated['status'], { title: string; color: string; d
   preview: { title: 'Direct route, awaiting confirmation', color: 'orange', detail: 'Relies on a cut the command has not confirmed yet. Launching now flies the detour.' },
   approved: { title: 'Direct route approved', color: 'green', detail: 'The cut is confirmed: ready to launch.' },
   fallback: { title: 'Fallback route', color: 'red', detail: 'The drone could not keep its crossing window: safe route, using no cut.' },
+  straight: { title: 'Straight anyway, jammer on', color: 'orange', detail: 'The command refused the cut: as chosen, the drone flies the direct route through the jammer still on. The control link may be lost while crossing.' },
 }
 
 export function MissionDetail({ id }: { readonly id: string }) {

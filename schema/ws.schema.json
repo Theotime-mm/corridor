@@ -1366,7 +1366,8 @@
             "preview",
             "approved",
             "fallback",
-            "baseline"
+            "baseline",
+            "straight"
           ],
           "title": "Status",
           "type": "string"

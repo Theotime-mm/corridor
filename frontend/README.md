@@ -77,7 +77,6 @@ src/
 
 ## To do
 
-- Known bug: after a refusal with plan B "fly straight anyway", the drone flies the direct route but the map and the plan card show the detour (`docs/architecture.md`, Known issues). Use `flownRoute` everywhere.
 - Offline basemap (PMTiles extract of the demo area). Today: online OSM raster tiles.
 - Backend serves `frontend/dist/` (static mount in `adapters/ws/app.py`).
 - Schedule / move cuts by dragging on the timeline (today: the EW cut form in the sidebar).

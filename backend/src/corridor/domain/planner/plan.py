@@ -96,7 +96,7 @@ def plan_mission(
             status, optimised = "preview", preview
     return MissionPlan(
         status=status,
-        metrics=_metrics(mission, baseline, optimised),
+        metrics=route_metrics(mission, baseline, optimised),
         baseline_route=baseline,
         optimised_route=optimised,
         choices=route_choices(scenario, mission, grid, cuts, flyable),
@@ -127,7 +127,7 @@ def _plan_through_cuts(
         return None
     return MissionPlan(
         status=status,
-        metrics=_metrics(mission, route, route),
+        metrics=route_metrics(mission, route, route),
         baseline_route=route,
         optimised_route=route,
         choices=choices,
@@ -421,7 +421,7 @@ def plan_fallback(
     )
     return MissionPlan(
         status="fallback",
-        metrics=_metrics(mission, route, route),
+        metrics=route_metrics(mission, route, route),
         baseline_route=route,
         optimised_route=route,
     )
@@ -622,14 +622,14 @@ def _saves(candidate: list[RoutePoint], reference: list[RoutePoint]) -> bool:
     return flight_s(candidate) < flight_s(reference) - MIN_SAVING_S
 
 
-def _metrics(
+def route_metrics(
     mission: Mission, baseline: list[RoutePoint], optimised: list[RoutePoint]
 ) -> PlanMetrics:
     baseline_s, optimised_s = flight_s(baseline), flight_s(optimised)
     return PlanMetrics(
         baseline_battery_used_pct=100 * baseline_s / mission.battery_max_s,
         optimised_battery_used_pct=100 * optimised_s / mission.battery_max_s,
-        saved_pct=100 * (baseline_s - optimised_s) / baseline_s,
+        saved_pct=100 * (baseline_s - optimised_s) / baseline_s if baseline_s > 0 else 0.0,
         saved_s=baseline_s - optimised_s,
     )
 

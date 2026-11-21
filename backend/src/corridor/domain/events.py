@@ -91,10 +91,12 @@ class Notification(Model):
     action: NotificationAction | None = None
 
 
-PlanStatus = Literal["preview", "approved", "fallback", "baseline"]
+PlanStatus = Literal["preview", "approved", "fallback", "baseline", "straight"]
 """preview: uses a scheduled cut not confirmed yet, not flyable.
 approved: uses confirmed cuts only. fallback: drone late, safe route from its position.
-baseline: no usable cut, the optimised route is the baseline."""
+baseline: no usable cut, the optimised route is the baseline.
+straight: the cut was refused (or not answered) and the pilot's plan B is "straight anyway":
+the drone flies the direct route through the jammer still on, control link at risk."""
 
 RouteAction = Literal["fly", "hover", "ground"]
 

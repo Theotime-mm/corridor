@@ -641,3 +641,9 @@ def test_plan_b_straight_anyway_flies_through_the_jammer_on(
     assert flight is not None
     assert flight.route == choices_plan().choices[0].route  # the direct route, not the detour
     assert flight.through_jammers == {"J3"}
+    # The plan published at launch is the route flown: every view shows the straight route.
+    (published,) = [e for e in events if isinstance(e, PlanUpdated)]
+    assert published.status == "straight"
+    assert published.optimised_route == flight.route
+    assert published.revision == flight.revision
+    assert engine.missions["M1"].plan == published

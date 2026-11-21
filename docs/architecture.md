@@ -742,7 +742,8 @@ Server to client:
   from take-off, `ground_m` (above sea level, 0 without an elevation file) and `alt_m`
   (height above the ground, interpolated, `null` while unknown). For the altitude profile.
 - `status`: `preview` (uses a cut not confirmed yet, not flyable), `approved` (confirmed cuts
-  only), `fallback` (drone late, safe route from its position), `baseline` (no usable cut).
+  only), `fallback` (drone late, safe route from its position), `baseline` (no usable cut),
+  `straight` (cut refused, plan B: the direct route through the jammer still on).
 - Battery figures are consumption in % of `battery_max_s`. `saved_pct` is relative to the
   baseline consumption: (85 - 52) / 85 = 38.8 %, not the 33 point difference. `saved_s` counts
   flight time, hover included, ground wait excluded.
@@ -767,7 +768,8 @@ refused (`decided_by: "timeout"`), and launching while still `pending` refuses i
 (`decided_by: "launch"`). After a refusal the pilot's plan B, `on_timeout`, decides the flight:
 `avoid` flies the `safe` route (the detour), `cross` flies the route picked anyway, straight
 through the jammers still on (`RouteRequest.route`, `jammers`): the control link may be lost
-there, and the safety rule leaves those jammers alone (`Flight.through_jammers`). Without a
+there, and the safety rule leaves those jammers alone (`Flight.through_jammers`). At launch the plan
+becomes that route, with status `straight`, so every view shows what is flown. Without a
 detour (the pilot stands in a jammer zone) the front always sends `avoid`: no answer, no flight. Picking again withdraws a pending request
 and its cuts. Every change goes out as `route.request` and is kept for the snapshot.
 
@@ -848,15 +850,3 @@ The defaults below do not change the layout; they live in the planner or in `saf
 | Directional jammers | hard beam edge, sidelobes required (`sidelobe_db`), friendly jammers only, k < 1 rejected, not used in `demo.json` |
 | Route smoothing | greedy string pulling, farthest point first, between the points of the SIPP route only (a better line through the middle of a straight run can be missed); holds kept |
 | Planner choices made in step 3 | SIPP and a 30 s / 5 s takeoff sweep, cuts must save more than 1 s, cells forbidden if any part may touch a zone, radar is a hard ban, margins 30 s / 60 s as constants in `plan.py` |
-
-## Known issues
-
-- **Plan B "fly straight anyway": the interface shows the detour.** The pilot picks a direct
-  route with "Fly straight anyway" and the command refuses the cut. The drone does fly the
-  direct route, straight through the jammer, which stays on (`RouteRequest.route`,
-  `Flight.through_jammers`); the timeline follows it (`flownRoute` in `frontend/src/domain/view.ts`).
-  But the route drawn on the map and the plan card still show the detour: the plan
-  (`PlanUpdated.optimised_route`) is the one recomputed after the refusal, and it does not know
-  about plan B. Probable cause, not checked: once the mission flies, the map draws
-  `plan.optimised_route` instead of the request's route. To fix: draw `flownRoute` everywhere
-  (map, plan card, battery figures), or publish the plan with the route that is flown.
