@@ -22,8 +22,11 @@ interpolation, so a one-pixel roof or river keeps its height), each safe for its
   the drone from a jammer or a radar is never taken higher than it is, so no shadow is assumed
   where there is none.
 
-``profile`` samples the ground and the drone height along a route, for the altitude profile
-under the route on the map.
+``with_altitude`` gives each route point its altitude above sea level, and ``profile`` samples
+the route every ``PROFILE_STEP_M``: position, ground surface, height and altitude, for the
+altitude profile and a 3D view. A level is a height above the clearance ground (``high``), so
+between two route points the drone follows that ground at its level: the altitude of the route
+is in the profile, not a straight line between its points.
 """
 
 from __future__ import annotations
@@ -137,9 +140,30 @@ def _ground_cells(path: Path | None, grid: Grid) -> GroundCells:
     return GroundCells(centre=centre, high=high, low=low)
 
 
-def profile(terrain: Terrain, route: Sequence[RoutePoint]) -> list[ProfilePoint]:
-    """Ground and drone height every ``PROFILE_STEP_M`` along the flown part of ``route``, and
-    at each of its points. Ground waits and hovers add no distance."""
+def with_altitude(terrain: Terrain, grid: Grid, route: Sequence[RoutePoint]) -> list[RoutePoint]:
+    """``route`` with ``amsl_m`` on each point that has a height: the clearance ground of its
+    cell plus its height, the ground surface for a point on the ground. Unchanged in 2D."""
+    if all(p.alt_m is None for p in route):
+        return list(route)
+    ground = ground_cells(terrain, grid)
+    out = []
+    for p in route:
+        cell = grid.cell_of(Position(lat=p.lat, lon=p.lon))
+        if p.alt_m is None or cell is None:
+            out.append(p)
+            continue
+        base = ground.centre if p.alt_m == 0 else ground.high
+        amsl = round(float(base[cell[1], cell[0]]) + p.alt_m, 1)
+        out.append(p.model_copy(update={"amsl_m": amsl}))
+    return out
+
+
+def profile(
+    terrain: Terrain, route: Sequence[RoutePoint], grid: Grid | None = None
+) -> list[ProfilePoint]:
+    """The route every ``PROFILE_STEP_M`` along its flown part, and at each of its points.
+    Ground waits and hovers add no distance. With ``grid`` (the mission's), each sample with a
+    height gets its altitude above sea level: clearance ground of its cell plus height."""
     flown = [p for p in route if p.action != "ground"] or list(route[:1])
     if not flown:
         return []
@@ -159,9 +183,24 @@ def profile(terrain: Terrain, route: Sequence[RoutePoint]) -> list[ProfilePoint]
     last = flown[-1]
     samples.append((distance, Position(lat=last.lat, lon=last.lon), last.alt_m))
     ground = ground_model(terrain).get_elevations([p for _, p, _ in samples])
+    high = None if grid is None else ground_cells(terrain, grid).high
+
+    def amsl(at: Position, alt: float | None) -> float | None:
+        cell = None if grid is None else grid.cell_of(at)
+        if alt is None or high is None or cell is None:
+            return None
+        return round(float(high[cell[1], cell[0]]) + alt, 1)
+
     return [
-        ProfilePoint(distance_m=round(d, 1), ground_m=round(float(g), 1), alt_m=alt)
-        for (d, _, alt), g in zip(samples, ground, strict=True)
+        ProfilePoint(
+            distance_m=round(d, 1),
+            lat=at.lat,
+            lon=at.lon,
+            ground_m=round(float(g), 1),
+            alt_m=None if alt is None else round(alt, 1),
+            amsl_m=amsl(at, alt),
+        )
+        for (d, at, alt), g in zip(samples, ground, strict=True)
     ]
 
 
