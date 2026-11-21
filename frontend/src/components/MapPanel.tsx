@@ -128,8 +128,10 @@ export function MapPanel() {
       view.current?.setRfHeatmap(null)
       return
     }
+    // J/S is against one pilot link: the selected mission's (the server falls back to the first)
     let active = true
-    fetch('/api/rf/heatmap?cells=true')
+    const query = selected ? `?mission_id=${encodeURIComponent(selected)}` : ''
+    fetch(`/api/rf/heatmap${query}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (active && data) view.current?.setRfHeatmap(data)
@@ -138,7 +140,7 @@ export function MapPanel() {
     return () => {
       active = false
     }
-  }, [showHeatmap, snapshot])
+  }, [showHeatmap, snapshot, selected])
 
   useEffect(() => {
     if (!view.current) return
