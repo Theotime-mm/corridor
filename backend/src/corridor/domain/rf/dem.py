@@ -31,8 +31,13 @@ class DemProvider(Protocol):
         """Vectorized elevations in metres AMSL for an ordered sequence of positions."""
         ...
 
-    def get_elevations_lonlat(self, lons: np.ndarray, lats: np.ndarray) -> np.ndarray:
-        """Elevations in metres AMSL at arrays of longitudes and latitudes, any shape."""
+    def get_elevations_lonlat(
+        self, lons: np.ndarray, lats: np.ndarray, nearest: bool = False
+    ) -> np.ndarray:
+        """Elevations in metres AMSL at arrays of longitudes and latitudes, any shape.
+
+        ``nearest``: the value of the raster cell each point falls in, not interpolated, so a
+        one-pixel peak or pit keeps its full height."""
         ...
 
 
@@ -68,7 +73,9 @@ class SyntheticDem:
     def get_elevations(self, positions: Sequence[Position]) -> np.ndarray:
         return np.array([self.get_elevation(p) for p in positions], dtype=np.float64)
 
-    def get_elevations_lonlat(self, lons: np.ndarray, lats: np.ndarray) -> np.ndarray:
+    def get_elevations_lonlat(
+        self, lons: np.ndarray, lats: np.ndarray, nearest: bool = False
+    ) -> np.ndarray:
         lons, lats = np.broadcast_arrays(lons, lats)
         flat = [
             self.get_elevation(Position(lat=float(lat), lon=float(lon)))
@@ -105,7 +112,9 @@ class RasterDem:
         ys = np.asarray([p.lat for p in positions], dtype=np.float64)
         return self.get_elevations_lonlat(xs, ys)
 
-    def get_elevations_lonlat(self, lons: np.ndarray, lats: np.ndarray) -> np.ndarray:
+    def get_elevations_lonlat(
+        self, lons: np.ndarray, lats: np.ndarray, nearest: bool = False
+    ) -> np.ndarray:
         lons, lats = np.broadcast_arrays(lons, lats)
         shape = lons.shape
         xs_arr = np.asarray(lons, dtype=np.float64).ravel()
@@ -121,7 +130,8 @@ class RasterDem:
         # order=1 is bilinear interpolation, mode='nearest' clamps to boundary.
         # The transform gives pixel corners; map_coordinates samples pixel centres.
         coords = np.vstack([rows_arr - 0.5, cols_arr - 0.5])
-        elevations = map_coordinates(self._data, coords, order=1, mode="nearest")
+        order = 0 if nearest else 1
+        elevations = map_coordinates(self._data, coords, order=order, mode="nearest")
 
         # Handle nodata if present
         elevations = np.where(elevations == self.nodata, 0.0, elevations)
