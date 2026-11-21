@@ -225,3 +225,5 @@ npm run lint && npm test && npm run build
 
 CI (`.github/workflows/ci.yml`) runs both on every pull request and every push to `main`, and
 also fails when `frontend/src/api/ws.gen.ts` is not regenerated from `schema/ws.schema.json`.
+Dependabot (`.github/dependabot.yml`) opens one grouped PR a week per ecosystem (actions, uv,
+npm).
