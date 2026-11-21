@@ -1,0 +1,29 @@
+html, body, #root { height: 100%; margin: 0; }
+
+.layout { display: grid; grid-template-rows: 52px 1fr 200px; height: 100vh; }
+.topbar { border-bottom: 1px solid var(--mantine-color-dark-4); height: 52px; }
+.main { display: grid; grid-template-columns: 1fr 400px; min-height: 0; }
+.map { width: 100%; height: 100%; }
+.side { border-left: 1px solid var(--mantine-color-dark-4); height: 100%; }
+.timeline { border-top: 1px solid var(--mantine-color-dark-4); overflow: hidden; }
+
+/* map labels and drone */
+.map-label { display: flex; align-items: center; gap: 4px; font: 600 12px/1 system-ui, sans-serif;
+  color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; white-space: nowrap; pointer-events: none; }
+.map-label-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid #fff; }
+.drone-marker { width: 16px; height: 16px; border-radius: 50%; background: #22b8cf;
+  border: 3px solid #fff; box-shadow: 0 0 8px #22b8cf; }
+
+/* vis-timeline, dark */
+.timeline .vis-timeline { border: none; font: 12px system-ui, sans-serif; color: var(--mantine-color-dark-0); }
+.timeline .vis-label, .timeline .vis-time-axis .vis-text { color: var(--mantine-color-dark-1); }
+.timeline .vis-panel { border-color: var(--mantine-color-dark-4); }
+.timeline .vis-time-axis .vis-grid.vis-minor { border-color: var(--mantine-color-dark-6); }
+.timeline .vis-time-axis .vis-grid.vis-major { border-color: var(--mantine-color-dark-4); }
+.timeline .vis-custom-time.cursor { background-color: #f08c00; width: 3px; cursor: ew-resize; }
+.timeline .vis-item { border-radius: 3px; color: #fff; font-size: 11px; }
+.timeline .vis-item.cut-scheduled { background: #f08c00; border-color: #f08c00; }
+.timeline .vis-item.cut-confirmed { background: #2f9e44; border-color: #2f9e44; }
+.timeline .vis-item.seg-fly { background: #22b8cf; border-color: #22b8cf; }
+.timeline .vis-item.seg-hover { background: #1971c2; border-color: #1971c2; }
+.timeline .vis-item.seg-ground { background: #495057; border-color: #495057; }

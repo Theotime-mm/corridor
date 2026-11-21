@@ -18,34 +18,41 @@ positions) comes back to Corridor.
 ## Architecture
 
 ```
-                    WebSocket                                       CoT, TCP 8088
-web front end ◄──────────────────► backend (Python, one process) ◄───────────────► OpenTAKServer ◄──TCP 8088──► ATAK (Android)
-(planning screen)                  ├─ API + simulation clock                         │
-                                   ├─ planner                                        └─ RabbitMQ / PostGIS
-                                   └─ TAK bridge (corridor.tak TakClient)
+web front end ◄──WebSocket /ws──► backend (Python, one process: FastAPI + uvicorn)
+(planning screen)                   ├─ engine: world state, simulation clock, safety rules
+                                    ├─ planner: pure computation, runs off the event loop (to write)
+                                    ├─ WebSocket adapter: commands in, events out
+                                    └─ TAK adapter (later) ◄──CoT, TCP 8088──► OpenTAKServer ◄──► ATAK (Android)
 ```
 
-- The backend owns all state: scenario, jammer schedules, routes, simulation time. The web front
-  end and ATAK are two views of it.
-- Planner: computes the routes from the scenario and the EW schedule. J/S jamming model and
-  planner design in [docs/architecture.md](docs/architecture.md).
-- TAK bridge: publishes zones, routes, drone position and notifications as CoT, and reads back
-  what ATAK sends.
+- The engine is the single owner of state: scenario, cuts, mission status, simulation time.
+  Adapters only send it commands and receive its events. The web front end and ATAK are two
+  views of it.
+- Planner: pure function (no state, no clock), so it can run in a process pool. J/S jamming
+  model and planner design in [docs/architecture.md](docs/architecture.md).
+- TAK adapter: will publish zones, routes, drone and notifications as CoT, and turn ATAK chat
+  (`ACK`) into commands. The CoT client (`corridor.tak`) works standalone but is not wired to the
+  engine yet.
 - OTS is only the relay to ATAK. The web front end never talks to OTS directly.
 
 Core architecture, module layout and WebSocket protocol: [docs/architecture.md](docs/architecture.md).
 
 Status:
-- Core skeleton: scenario loading, J/S jammer zones, cut scheduling and confirmation, mission,
-  accelerated clock, WebSocket server and its JSON Schema. Planner (masks, SIPP, takeoff sweep,
-  statuses and metrics) running in a worker process and emitting `plan.updated`. Safety rules
-  (checkpoints, in-flight fallback) not started.
-- TAK side: OTS stack, CoT client and demo shapes (sections below). Not wired to the core yet.
-- Front end: not started.
+- Backend core: scenario loading and checks, J/S zones, planning grid, cut scheduling /
+  confirmation / cancellation, mission launch, accelerated clock, WebSocket server, its JSON
+  Schema, tests.
+- Planner (masks, SIPP, takeoff sweep, statuses and metrics) running in a worker process and
+  emitting `plan.updated`.
+- Flight: simulated drone (`drone.state`), launch only on a flyable plan, safety rule (late
+  drone or cancelled cut -> fallback route from the drone position), timed jammer restarts
+  (`jammer.restarted`), `inject.delay` demo twist.
+- TAK side: OTS stack, CoT client and demo shapes (sections below). Not wired to the engine yet.
+- Front end: first draft in `frontend/` (map, cuts, notifications, timeline, live drone).
 
 ## Front end
 
-Planning screen used for the demo; ATAK stays the field view. Lives in `web/` (not created yet).
+Planning screen used for the demo; ATAK stays the field view. Lives in `frontend/` (first draft:
+what works and how to run it in [`frontend/README.md`](frontend/README.md)).
 
 | Layer | Choice | Why |
 |---|---|---|
@@ -68,24 +75,28 @@ Layout:
 
 Rules:
 
-- All map code sits in one framework-free module, `web/src/map/mapView.ts` (`setZones`,
+- All map code sits in one framework-free module, `frontend/src/map/mapView.ts` (`setZones`,
   `setRoutes`, `setDrone`, `setPhones`, ...). React components only create the map and call it.
 - The front end holds no business state: commands go to the backend and state comes back over
   the same WebSocket (protocol in [docs/architecture.md](docs/architecture.md)). On (re)connect the backend sends the full state, so a page reload or a
   dropped connection loses nothing.
 - No internet needed at runtime: fonts, scripts and basemap are bundled.
-- Demo build: `npm run build`, then the backend serves `web/dist/` as static files. One process,
-  one port, no Node on the demo laptop.
+- Message types are generated from `schema/ws.schema.json` (see "Contract" in
+  [docs/architecture.md](docs/architecture.md)), never written by hand.
+- Demo build: `npm run build`, then the backend serves `frontend/dist/` as static files. One process,
+  one port, no Node on the demo laptop. The static mount is not in `adapters/ws/app.py` yet.
 - Demo controls: scenario picker, start / pause / speed, reset, a keyboard shortcut per demo
   step.
 
 Repository layout:
 
 ```
-backend/   Python project (uv): core, WebSocket server, TAK client, tests, scenarios
-schema/    WebSocket protocol JSON Schema, generated by the backend, consumed by the front end
-infra/ots/ OpenTAKServer stack (Docker compose)
-docs/      architecture
+backend/    Python project (uv): engine, WebSocket server, TAK client, tests, scenarios
+schema/     WebSocket protocol JSON Schema, generated by the backend, consumed by the front end
+infra/ots/  OpenTAKServer stack (Docker compose)
+docs/       architecture.md (core, protocol, planner design), feature.md (functional spec)
+resources/  research notes, standalone planner prototype, old state of the art (reference only)
+frontend/   front end (React + Vite), first draft
 ```
 
 ## Corridor server
@@ -95,16 +106,28 @@ Python commands run from `backend/`.
 ```bash
 cd backend
 uv sync
-uv run corridor-server                        # ws://127.0.0.1:8000/ws, scenarios/demo.json
-uv run corridor-server --clock-factor 30 --scenario scenarios/other.json
+uv run corridor-server            # ws://127.0.0.1:8000/ws, scenarios/demo.json, clock x20, paused
+uv run corridor-server --host 0.0.0.0 --port 8000 --clock-factor 30 --cell-m 200 \
+  --scenario scenarios/other.json
 uv run corridor-schema > ../schema/ws.schema.json   # after changing a message model
 ```
+
+- On connect a client gets a `snapshot` (scenario, planning grid, zones, clock, cuts, mission
+  status), then every event. A reconnect gets a fresh snapshot.
+- The simulation clock starts paused at t = 0; the front starts it with a `clock.set` command.
+- Demo: with the demo powers, J3's zone takes about 300 s to cross. A cut shorter than about
+  7 min (crossing + 30 s + 60 s of margins) cannot give the straight route.
+- Late-drone twist: launch on an approved plan, start the clock, then send `inject.delay`
+  (front: "Hold drone 120 s") before the drone reaches J3: it switches to a fallback route.
+- State lives in memory: restart the server to reset the scenario.
+- `--host 0.0.0.0` exposes the server on the LAN (another laptop, a phone browser).
+- A test fails when `schema/ws.schema.json` is out of date: regenerate it with `corridor-schema`.
 
 ## Requirements
 
 - Docker with the compose plugin, daemon running (`sudo systemctl enable --now docker`, user in
   the `docker` group)
-- uv
+- uv (installs Python 3.12 if missing)
 - Node.js LTS (front end development only)
 
 ## Start OTS
@@ -138,7 +161,7 @@ The OTS API is published on `127.0.0.1:8081` only: `curl http://127.0.0.1:8081/a
 
 Reset everything (deletes the OTS database and CA): `docker compose down -v`.
 
-## Corridor CLI
+## TAK CLI (`corridor-tak`)
 
 ```bash
 cd backend
