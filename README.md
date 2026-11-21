@@ -40,8 +40,10 @@ Core architecture, module layout and WebSocket protocol: [docs/architecture.md](
 Status:
 - Backend core: scenario loading and checks, J/S zones, planning grid, cut scheduling /
   confirmation / cancellation, mission launch, accelerated clock, WebSocket server, its JSON
-  Schema, tests. `plan.updated` has a fixed shape but is not emitted yet.
-- To write: planner (masks, A*), safety rules, simulated drone (`drone.state`), replans.
+  Schema, tests.
+- Planner: masks, SIPP, takeoff sweep, statuses and metrics, running in a worker process and
+  emitting `plan.updated`.
+- To write: safety rules, simulated drone (`drone.state`), in-flight replans.
 - TAK side: OTS stack, CoT client and demo shapes (sections below). Not wired to the engine yet.
 - Front end: first draft in `frontend/` (map, cuts, notifications, timeline, mock plan).
 

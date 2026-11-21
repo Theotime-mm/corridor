@@ -14,7 +14,7 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from corridor.domain.commands import Command
-from corridor.domain.events import Event
+from corridor.domain.events import Event, PlanUpdated
 from corridor.domain.geo import Grid
 from corridor.domain.model import Model
 from corridor.domain.scenario import Scenario
@@ -32,6 +32,7 @@ class Snapshot(Model):
     clock: ClockState
     cuts: list[Cut]
     mission_status: MissionStatus
+    plan: PlanUpdated | None = Field(description="Latest plan; None until the first one.")
 
 
 class Ack(Model):
