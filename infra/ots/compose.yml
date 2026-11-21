@@ -1,0 +1,130 @@
+# OpenTAKServer for local development.
+#
+# Derived from brian7704/OpenTAKServer-Docker@30aa20b (2026-11-11), trimmed:
+# - removed: mediamtx (video), certbot, nginx-proxy and ots-webui (upstream nginx
+#   wiring is incomplete: templates never mounted, hard dependency on mediamtx);
+# - bind mount ./ots replaced by a named volume, made writable for the OTS user
+#   (uid 1000, gid 1024 in 1.8.3 images) by the one-shot ots-init service;
+# - PostGIS no longer published on the host.
+#
+# Ports published on the host:
+#   8088  CoT TCP streaming (no auth, what ATAK and the connector use in dev)
+#   8089  CoT SSL streaming (needs a client certificate from the OTS CA)
+#   8081  OTS API on loopback only,
+#         default admin: administrator / password
+#
+# Images pinned by version tag + digest: OTS 1.8.3 (built 2026-11-11). Upstream ":master"
+# is a stale 1.5.14 build from 2025-10 with a RabbitMQ binding bug: do not use it.
+# To upgrade: change the version tag, pull, re-pin the digest (see README).
+
+name: corridor-ots
+
+services:
+  ots-init:
+    image: busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+    command: chown -R 1000:1024 /app/ots
+    volumes:
+      - ots18-data:/app/ots
+
+  ots:
+    image: ghcr.io/brian7704/opentakserver:1.8.3@sha256:6bdc9a59e63696474203a93861d15be96cea3290249362b4522ca74c47427e7d
+    hostname: opentakserver
+    restart: unless-stopped
+    tty: true
+    ports:
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - ots18-data:/app/ots
+    depends_on:
+      ots-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      ots-db:
+        condition: service_healthy
+    healthcheck:
+      test: curl --fail http://localhost:8081/api/health || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+    env_file: ots_config.env
+
+  ots_cot_parser:
+    image: ghcr.io/brian7704/ots_cot_parser:1.8.3@sha256:4e9546e5548d1862508bba312e8465737f2b96c43c63ccb01bbac650d4366024
+    hostname: ots-cot_parser
+    restart: unless-stopped
+    tty: true
+    command: python3 /app/venv/bin/cot_parser
+    healthcheck:
+      disable: true
+    volumes:
+      - ots18-data:/app/ots
+    depends_on:
+      ots:
+        condition: service_healthy
+    env_file: ots_config.env
+
+  ots_eud_handler:
+    image: ghcr.io/brian7704/ots_eud_handler:1.8.3@sha256:9ed7fc5c7a0354deeea6a23a8413883b03b7dccf2fdf7303fd01ce17bcbc6557
+    hostname: ots_eud_handler
+    restart: unless-stopped
+    tty: true
+    command: python3 /app/venv/bin/eud_handler
+    ports:
+      - "0.0.0.0:8088:8088"
+    healthcheck:
+      disable: true
+    volumes:
+      - ots18-data:/app/ots
+    depends_on:
+      ots:
+        condition: service_healthy
+    env_file: ots_config.env
+
+  ots_eud_handler_ssl:
+    image: ghcr.io/brian7704/ots_eud_handler_ssl:1.8.3@sha256:b8a3d61e81ba3574fe013546334c79dd18e56949f4f4fcbd6bbdf1a959003a23
+    hostname: ots_eud_handler_ssl
+    restart: unless-stopped
+    tty: true
+    command: python3 /app/venv/bin/eud_handler --ssl
+    ports:
+      - "0.0.0.0:8089:8089"
+    healthcheck:
+      disable: true
+    volumes:
+      - ots18-data:/app/ots
+    depends_on:
+      ots:
+        condition: service_healthy
+    env_file: ots_config.env
+
+  rabbitmq:
+    image: rabbitmq:latest@sha256:183272aa2ff82718cabeef343de8d9a900931ea65fda4e563fed2a6d9efde578
+    hostname: rabbitmq
+    restart: unless-stopped
+    volumes:
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./rabbitmq/99-opentakserver.conf:/etc/rabbitmq/conf.d/99-opentakserver.conf:ro
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 30s
+      retries: 6
+
+  ots-db:
+    image: postgis/postgis:18-3.6@sha256:4a43e3c3e5d55b9208240fc71db543b79c638766280c625a425bd0a2390989c4
+    hostname: ots-db
+    restart: unless-stopped
+    env_file: ots_config.env
+    volumes:
+      - ots18-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  ots18-data:
+  ots18-pgdata:
