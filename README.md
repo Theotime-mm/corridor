@@ -1,27 +1,80 @@
 # Corridor
 
-Friendly EW / drone corridor deconfliction (idea #1 in `../edth_ideas.xlsx`). EW units declare
-jam zones (area, bands, time) and drone teams book corridors; a conflict engine checks
-area x band x time overlap. Jam zones and corridors are shown on ATAK.
+4D drone route planning synchronised with the friendly EW schedule (idea #1 in
+`../edth_ideas.xlsx`, reworked). The planner computes the route, in space and time, that reaches
+the target while avoiding radars and jamming zones and keeping the radio link with the pilot.
+When a friendly jammer has a scheduled cut, the planner recomputes a more direct route that
+crosses the zone during the cut, and notifies the pilot and the jammer operator. Goal: save the
+battery a detour would cost.
 
 No ATAK plugin: the TAK SDK is not available, so Corridor runs as an external service that
 speaks CoT (Cursor on Target) to an OpenTAKServer (OTS). ATAK clients connected to the same
-OTS see zones and corridors as regular shapes, and shapes drawn in ATAK come back to Corridor.
+OTS see zones, routes and the drone as regular shapes, and what ATAK sends (shapes, chat,
+positions) comes back to Corridor.
+
+## Architecture
 
 ```
-ATAK (Android) ──TCP 8088──┐
-                           ├── OpenTAKServer ── RabbitMQ / PostGIS
-corridor-tak ──TCP 8088────┘
+                 REST + WebSocket                                   CoT, TCP 8088
+web front end ◄──────────────────► backend (Python, one process) ◄───────────────► OpenTAKServer ◄──TCP 8088──► ATAK (Android)
+(planning screen)                  ├─ API + simulation clock                         │
+                                   ├─ planner                                        └─ RabbitMQ / PostGIS
+                                   └─ TAK bridge (corridor.tak TakClient)
 ```
 
-Status: setup only (OTS stack, CoT client, demo shapes). Conflict engine and chat parsing are
-not started.
+- The backend owns all state: scenario, jammer schedules, routes, simulation time. The web front
+  end and ATAK are two views of it.
+- Planner: computes the routes from the scenario and the EW schedule. Algorithm and RF model are
+  still being chosen by the team.
+- TAK bridge: publishes zones, routes, drone position and notifications as CoT, and reads back
+  what ATAK sends.
+- OTS is only the relay to ATAK. The web front end never talks to OTS directly.
+
+Status: setup only (OTS stack, CoT client, demo shapes). Backend, planner and front end are not
+started in this repo.
+
+## Front end
+
+Planning screen used for the demo; ATAK stays the field view. Lives in `web/` (not created yet).
+
+| Layer | Choice | Why |
+|---|---|---|
+| UI | React + Vite + TypeScript | Known by the team, typed contract with the backend |
+| Components | Mantine | Panels, buttons, notifications, dark theme without CSS work |
+| Map | MapLibre GL JS, used directly (no wrapper library) | GeoJSON layers updated in place, smooth animation, offline tiles |
+| Basemap | Online tiles + an offline PMTiles extract of the demo area | The map keeps working without venue Wi-Fi |
+| Timeline | vis-timeline | Draggable cut windows and a moving time cursor out of the box |
+| Client state | Zustand | One small store, fed by the WebSocket |
+
+Layout:
+
+- Map, about 70% of the screen: jamming zones (red = active, green = cut, purple = enemy),
+  radars (orange), baseline route (grey, dashed), planned route, animated drone, ATAK users'
+  positions.
+- Right panel: mission card (distance, time, battery vs detour), route options, approve button,
+  notification feed (pilot and EW operator).
+- Bottom: timeline, one row per jammer with its cut windows, plus one row for the drone showing
+  when it crosses each zone. Scrubbing the timeline updates the map.
+
+Rules:
+
+- All map code sits in one framework-free module, `web/src/map/mapView.ts` (`setZones`,
+  `setRoutes`, `setDrone`, `setPhones`, ...). React components only create the map and call it.
+- The front end holds no business state: actions go to the backend over REST, state comes back
+  over the WebSocket. On (re)connect the backend sends the full state, so a page reload or a
+  dropped connection loses nothing.
+- No internet needed at runtime: fonts, scripts and basemap are bundled.
+- Demo build: `npm run build`, then the backend serves `web/dist/` as static files. One process,
+  one port, no Node on the demo laptop.
+- Demo controls: scenario picker, start / pause / speed, reset, a keyboard shortcut per demo
+  step.
 
 ## Requirements
 
 - Docker with the compose plugin, daemon running (`sudo systemctl enable --now docker`, user in
   the `docker` group)
 - uv
+- Node.js LTS (front end development only)
 
 ## Start OTS
 
