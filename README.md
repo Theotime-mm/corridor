@@ -41,11 +41,13 @@ Status:
 - Backend core: scenario loading and checks, J/S zones, planning grid, cut scheduling /
   confirmation / cancellation, mission launch, accelerated clock, WebSocket server, its JSON
   Schema, tests.
-- Planner: masks, SIPP, takeoff sweep, statuses and metrics, running in a worker process and
+- Planner (masks, SIPP, takeoff sweep, statuses and metrics) running in a worker process and
   emitting `plan.updated`.
-- To write: safety rules, simulated drone (`drone.state`), in-flight replans.
+- Flight: simulated drone (`drone.state`), launch only on a flyable plan, safety rule (late
+  drone or cancelled cut -> fallback route from the drone position), timed jammer restarts
+  (`jammer.restarted`), `inject.delay` demo twist.
 - TAK side: OTS stack, CoT client and demo shapes (sections below). Not wired to the engine yet.
-- Front end: first draft in `frontend/` (map, cuts, notifications, timeline, mock plan).
+- Front end: first draft in `frontend/` (map, cuts, notifications, timeline, live drone).
 
 ## Front end
 
@@ -113,6 +115,10 @@ uv run corridor-schema > ../schema/ws.schema.json   # after changing a message m
 - On connect a client gets a `snapshot` (scenario, planning grid, zones, clock, cuts, mission
   status), then every event. A reconnect gets a fresh snapshot.
 - The simulation clock starts paused at t = 0; the front starts it with a `clock.set` command.
+- Demo: with the demo powers, J3's zone takes about 300 s to cross. A cut shorter than about
+  7 min (crossing + 30 s + 60 s of margins) cannot give the straight route.
+- Late-drone twist: launch on an approved plan, start the clock, then send `inject.delay`
+  (front: "Hold drone 120 s") before the drone reaches J3: it switches to a fallback route.
 - State lives in memory: restart the server to reset the scenario.
 - `--host 0.0.0.0` exposes the server on the LAN (another laptop, a phone browser).
 - A test fails when `schema/ws.schema.json` is out of date: regenerate it with `corridor-schema`.

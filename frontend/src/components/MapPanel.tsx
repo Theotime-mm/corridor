@@ -10,6 +10,8 @@ export function MapPanel() {
   const snapshot = useStore((s) => s.snapshot)
   const cuts = useStore((s) => s.cuts)
   const plan = useStore((s) => s.plan)
+  const drone = useStore((s) => s.drone)
+  const scrubbing = useStore((s) => s.viewTimeS !== null)
   const t = useViewTime()
 
   useEffect(() => {
@@ -38,10 +40,15 @@ export function MapPanel() {
     view.current?.setRoutes(plan?.baseline_route ?? null, plan?.optimised_route ?? null)
   }, [plan])
 
+  // Live: the server's simulated drone. Scrubbing: where the plan puts it at that instant.
   useEffect(() => {
+    if (!scrubbing) {
+      view.current?.setDrone(drone?.position ?? null)
+      return
+    }
     const at = plan ? positionAt(plan.optimised_route, t) : null
     view.current?.setDrone(at?.pos ?? null)
-  }, [plan, t])
+  }, [plan, drone, scrubbing, t])
 
   return <div ref={container} className="map" />
 }

@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
+from corridor.domain.geo import Position
 from corridor.domain.model import Model
 from corridor.domain.state import ClockState, Cut, MissionStatus
 
@@ -84,6 +85,25 @@ class PlanUpdated(Model):
     optimised_route: list[RoutePoint]
 
 
+class DroneState(Model):
+    """Simulated drone, every engine tick (about 2 Hz) while it flies."""
+
+    type: Literal["drone.state"] = "drone.state"
+    position: Position
+    action: RouteAction
+    battery_used_pct: float = Field(description="Of battery_max_s, airborne time so far.")
+    delay_s: float = Field(description="Behind the schedule of the route being flown.")
+    revision: int = Field(description="Plan revision of the route being flown.")
+
+
+class JammerRestarted(Model):
+    """A confirmed cut ended: the jammer is back on."""
+
+    type: Literal["jammer.restarted"] = "jammer.restarted"
+    jammer: str
+    cut: str
+
+
 Event = Annotated[
     CutScheduled
     | CutCancelled
@@ -91,6 +111,8 @@ Event = Annotated[
     | ClockChanged
     | MissionStatusChanged
     | Notification
-    | PlanUpdated,
+    | PlanUpdated
+    | DroneState
+    | JammerRestarted,
     Field(discriminator="type"),
 ]

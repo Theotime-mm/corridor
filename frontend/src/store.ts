@@ -5,6 +5,7 @@ import type { ConnStatus } from './api/socket'
 import type {
   ClockState,
   Cut,
+  DroneState,
   MissionStatus,
   Notification,
   PlanUpdated,
@@ -28,6 +29,8 @@ interface State {
   clockSyncedAt: number
   missionStatus: MissionStatus
   plan: PlanUpdated | null
+  /** Last simulated drone state from the server; null before take-off. */
+  drone: DroneState | null
   feed: FeedItem[]
   lastError: string | null
   /** Callsign used as `actor` in commands. */
@@ -53,6 +56,7 @@ export const useStore = create<State>((set, get) => ({
   clockSyncedAt: performance.now(),
   missionStatus: 'planned',
   plan: null,
+  drone: null,
   feed: [],
   lastError: null,
   actor: '',
@@ -80,6 +84,7 @@ export const useStore = create<State>((set, get) => ({
           clock: p.clock,
           missionStatus: p.mission_status,
           plan: p.plan ?? null,
+          drone: p.drone ?? null,
           actor: get().actor || p.scenario.mission.pilot_callsign,
         })
         return
@@ -107,6 +112,13 @@ export const useStore = create<State>((set, get) => ({
         return
       case 'plan.updated':
         set({ ...clockSync, plan: p })
+        return
+      case 'drone.state':
+        set({ ...clockSync, drone: p })
+        return
+      case 'jammer.restarted':
+        // The map derives jammer state from the cuts; the notification reaches the feed.
+        set(clockSync)
         return
       case 'ack':
         set({ ...clockSync, lastError: null })

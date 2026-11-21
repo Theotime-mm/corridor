@@ -41,11 +41,13 @@ backend/src/corridor/
     planner/
       masks.py    zones rasterised on the grid, one numpy mask per interval between cut boundaries
       astar.py    SIPP (safe interval path planning): A* over (cell, safe interval)
-      plan.py     plan_route() (one set of cuts), plan_mission() (baseline, optimised, metrics)
+      plan.py     plan_route() (one set of cuts), plan_mission() (baseline, optimised, metrics),
+                  plan_fallback() (from the drone position in flight, no cut)
+    safety.py     Flight (route, delay, holds, battery), safety rule, cut start/end transitions
   engine/
     clock.py      SimClock: accelerated clock with an injectable wall-clock source
-    engine.py     Engine: applies commands, publishes events to subscribers, requests plans
-    replan.py     ProcessReplanner: plans in a spawned worker process, results back on the loop
+    engine.py     Engine: commands, plans, tick (cut transitions, stale plan, flight, safety rule)
+    replan.py     ProcessReplanner: mission and fallback plans in a spawned worker process
   adapters/
     ws/
       schemas.py  wire envelopes, Snapshot, Ack, Error
@@ -58,11 +60,7 @@ backend/scenarios/demo.json   demo scenario (J3 between pilot and target, radar 
 schema/ws.schema.json         generated protocol schema (repository root), consumed by the front end
 ```
 
-Still to write, by whoever owns the piece:
-
-| Module | Content |
-|---|---|
-| `domain/safety.py` | checkpoints, fallback to the safe route, timed restart |
+Still to write, by whoever owns the piece: the TAK adapter (`adapters/tak`), `inject.enemy_threat`.
 
 Dependency rule: `domain` imports nothing from `engine` or `adapters`; `engine` imports nothing
 from `adapters`. It can be enforced later with `import-linter` if needed.
@@ -184,14 +182,24 @@ Rules enforced today:
 - Plans: at startup and after every `cut.schedule`, `cut.confirm` or `cut.cancel`, while the
   mission is `planned`, the engine requests a plan with the next revision. The earliest takeoff
   is the current simulated time plus 3 wall-clock seconds at the clock factor (none while
-  paused), so the route does not start in the past when it arrives. It can later: nothing
-  replans as the clock passes the planned takeoff while the mission is still `planned`. A result whose revision is not the latest, or
+  paused), so the route does not start in the past when it arrives. The tick replans a plan
+  whose takeoff time has passed while the mission is still `planned`. A result whose revision is not the latest, or
   that arrives after launch, is dropped; otherwise it goes out as `plan.updated` and is kept for
   the snapshot. No route at all gives a notification to the pilot.
 - Without a replanner (`create_app(..., replanner=None)`, used by tests), nothing is planned.
-- To come: the engine owns the simulated drones (advance along the route at clock speed, check
-  checkpoints, apply the safety rules) and the in-flight replans (`fallback`). Events produced
-  off a command (drone late, jammer restarted) go through the same subscribers.
+- `tick()` runs every 0.5 s of wall-clock time (app lifespan). It reports confirmed cuts
+  starting and ending (a notification to the operator, `jammer.restarted` at the end), replans a
+  stale plan before launch, and moves the simulated drone (`drone.state`).
+- Launch needs a flyable plan (`approved` or `baseline`), not `preview`: operator confirmation is
+  a pre-flight step. Launching after the planned takeoff starts the flight late by the difference.
+  Without a replanner, launch needs no plan and nothing flies.
+- Flight (`domain/safety.py`): the drone follows the timed route `delay_s` behind it. While held
+  (`inject.delay`) it stays where it is; held time in the air counts on the battery.
+- Safety rule, every tick: the rest of the route, shifted by the delay, may only be in a friendly
+  jammer zone inside a confirmed cut, with the planner margins (2 s of tolerance for sampling).
+  Otherwise (drone late, cut cancelled) the engine requests a `fallback` plan from the drone
+  position (`plan_fallback`: no cut, take off now) and switches the flight to it. The pilot gets a
+  notification at each step. No safe route: the drone keeps its route and the pilot is told.
 
 ## Planner
 
@@ -230,7 +238,8 @@ time found so far. A `plan_mission` takes about 0.3 to 1.7 s on the demo. A hove
 
 **Statuses** (`plan_mission`). Baseline: no cut. Then the best route on confirmed cuts
 (`approved` if it saves more than 1 s), then on every cut (`preview` if it saves more than the
-approved or baseline one). Otherwise `baseline`. `fallback` comes with the in-flight replan.
+approved or baseline one). Otherwise `baseline`. `fallback`: `plan_fallback`, from the drone
+position, no cut; its baseline is the route itself (nothing to compare).
 
 **J/S zones** (`domain/zones.py`). In free space, with EIRP taken toward the drone and the jammer
 on the link band, the J/S ratio at the drone is
@@ -353,15 +362,15 @@ Server to client:
 
 | Type | Status | Content |
 |---|---|---|
-| `snapshot` | done | on connect: scenario, derived grid, zones, clock, cuts, mission status, latest plan (or null) |
+| `snapshot` | done | on connect: scenario, derived grid, zones, clock, cuts, mission status, latest plan (or null), latest drone state (or null) |
 | `clock` | done | sim time, factor, paused; on change only |
 | `cut.scheduled`, `cut.confirmed`, `cut.cancelled` | done | the cut, or its id |
-| `mission.status` | done | status |
+| `mission.status` | done | `planned`, `flying`, `arrived` |
 | `notification` | done | `to` (callsign), text, optional action (the button to show and the cut it confirms) |
 | `ack`, `error` | done | `req_id`, reason on error |
 | `plan.updated` | done | see below; after every cut change while the mission is `planned`; arrives after the command's `ack` |
-| `drone.state` | to come | position, battery, about 2 Hz |
-| `jammer.restarted` | to come | jammer id, with a notification to its operator |
+| `drone.state` | done | position, action, battery used, delay, route revision; every tick in flight |
+| `jammer.restarted` | done | jammer id and cut id, with a notification to its operator |
 
 **Client to server**
 
@@ -372,7 +381,8 @@ Server to client:
 | `cut.confirm` | done | cut id |
 | `mission.launch` | done | none (one mission per scenario) |
 | `clock.set` | done | factor and/or paused |
-| `inject.enemy_threat`, `inject.delay` | to come | demo twists |
+| `inject.delay` | done | `delay_s`: hold the flying drone where it is (demo twist) |
+| `inject.enemy_threat` | to come | demo twist |
 
 **Contract.** `schema/ws.schema.json` is generated from the pydantic models
 (from `backend/`: `uv run corridor-schema > ../schema/ws.schema.json`) and a test fails when it is out of date. Its
@@ -403,12 +413,13 @@ The defaults below do not change the layout; they live in the planner or in `saf
 |---|---|
 | Drone speed | per mission (`cruise_speed_mps`) |
 | Cell size | 100 m, with masks precomputed per interval; 200 m if replans are too slow |
-| Operator confirmation | required before take-off; in-flight confirmation would be a replan from the current position |
+| Operator confirmation | required before take-off; a confirmation in flight does not reroute |
 | "Signed CoT" in the pitch | not true today (plain TCP 8088); TLS on 8089 or drop the claim |
 | Longest ground wait before takeoff | unbounded: a cut an hour ahead gives a plan that waits an hour on the ground |
 | No route without a cut (k < 1) | `plan_mission` returns None (metrics need a baseline) |
 | Preview better than a flyable approved route | `preview` wins the single `optimised_route` slot, the pilot loses the flyable route until confirmation (never happens with one cut) |
 | Plan shown while a replan runs | the previous plan stays (in the snapshot too) until the new one arrives, about 1 to 2 s; after a `cut.cancel` it may cross the cancelled cut; if the worker fails it stays, only logged |
-| Launch on a `preview` plan | accepted today; to gate in `safety.py` |
+| Launch on a `preview` plan | rejected ("the plan relies on a cut not confirmed yet") |
+| Battery left for a fallback | `plan_fallback` allows a full `battery_max_s`; the battery already used is not deducted |
 | Replan lead time | 3 wall-clock seconds (`PLAN_LEAD_WALL_S`); two queued plans can exceed it |
 | Planner choices made in step 3 | SIPP and a 30 s / 5 s takeoff sweep, cuts must save more than 1 s, cells forbidden if any part may touch a zone, radar is a hard ban, margins 30 s / 60 s as constants in `plan.py` |

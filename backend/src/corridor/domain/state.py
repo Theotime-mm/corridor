@@ -11,7 +11,7 @@ from corridor.domain.model import Model
 from corridor.domain.scenario import Scenario
 
 CutStatus = Literal["scheduled", "confirmed"]
-MissionStatus = Literal["planned", "flying"]
+MissionStatus = Literal["planned", "flying", "arrived"]
 
 SCENARIO_ACTOR = "scenario"
 """``requested_by`` of the cuts listed in the scenario file."""

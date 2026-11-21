@@ -12,7 +12,7 @@ export function CutsCard() {
   const now = useLiveSimTime(1)
   const [jammer, setJammer] = useState<string | null>(null)
   const [startMin, setStartMin] = useState<number | string>('')
-  const [durationMin, setDurationMin] = useState<number | string>(6)
+  const [durationMin, setDurationMin] = useState<number | string>(8)
   if (!snapshot) return null
   const { friendly_jammers: jammers, start_time } = snapshot.scenario
   const operatorOf = (id: string) => jammers.find((j) => j.id === id)?.operator_callsign
@@ -20,7 +20,7 @@ export function CutsCard() {
 
   const defaultStart = Math.ceil(now / 60) + 2
   const start = typeof startMin === 'number' ? startMin : defaultStart
-  const duration = typeof durationMin === 'number' ? durationMin : 6
+  const duration = typeof durationMin === 'number' ? durationMin : 8
   const selected = jammer ?? jammers[0]?.id ?? null
 
   return (

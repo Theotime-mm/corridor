@@ -16,3 +16,4 @@ export type MissionStatus = G.MissionStatus
 export type Notification = G.Notification
 export type PlanUpdated = G.PlanUpdated
 export type RoutePoint = G.RoutePoint
+export type DroneState = G.DroneState
