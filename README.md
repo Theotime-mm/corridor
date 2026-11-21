@@ -7,6 +7,9 @@ When a friendly jammer has a scheduled cut, the planner recomputes a more direct
 crosses the zone during the cut, and notifies the pilot and the jammer operator. Goal: save the
 battery a detour would cost.
 
+Full description of the feature (users, behaviour, safety rules, demo story, open questions):
+[`docs/feature.md`](docs/feature.md).
+
 No ATAK plugin: the TAK SDK is not available, so Corridor runs as an external service that
 speaks CoT (Cursor on Target) to an OpenTAKServer (OTS). ATAK clients connected to the same
 OTS see zones, routes and the drone as regular shapes, and what ATAK sends (shapes, chat,
