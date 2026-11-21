@@ -66,7 +66,14 @@ export interface LayerVisibility {
   rf?: boolean
   heatmap?: boolean
   relief?: boolean
+  buildings?: boolean
 }
+
+/** Building fill by height (m): darker low, brighter high, so towers stand out on the dark map. */
+const BUILDING_COLOR: maplibregl.ExpressionSpecification = [
+  'interpolate', ['linear'], ['get', 'height_m'],
+  0, '#343a40', 20, '#495057', 60, '#868e96', 150, '#ced4da', 300, '#f1f3f5',
+]
 
 export interface Scene {
   /** Only what this callsign may see. */
@@ -160,7 +167,7 @@ export function createMapView(container: HTMLElement): MapView {
   let scene: Scene | null = null
   let fitted = ''
   let states: Record<string, ZoneState> = {}
-  let visibility: Required<LayerVisibility> = { grid: true, baseline: true, zones: true, rf: true, heatmap: false, relief: true }
+  let visibility: Required<LayerVisibility> = { grid: true, baseline: true, zones: true, rf: true, heatmap: false, relief: true, buildings: true }
   const markers: maplibregl.Marker[] = []
   const drones = new Map<string, maplibregl.Marker>()
   const requestMarkers: maplibregl.Marker[] = []
@@ -188,6 +195,7 @@ export function createMapView(container: HTMLElement): MapView {
     if (!loaded) return
     const v = (on: boolean) => (on ? 'visible' : 'none')
     map.setLayoutProperty('hillshade-relief', 'visibility', v(visibility.relief))
+    map.setLayoutProperty('buildings-fill', 'visibility', v(visibility.buildings))
     map.setLayoutProperty('grid-line', 'visibility', v(visibility.grid))
     map.setLayoutProperty('route-baseline', 'visibility', v(visibility.baseline))
     map.setLayoutProperty('zones-fill', 'visibility', v(visibility.zones))
@@ -299,6 +307,15 @@ export function createMapView(container: HTMLElement): MapView {
         'hillshade-illumination-direction': 315,
         'hillshade-illumination-altitude': 45,
       },
+    })
+
+    // Buildings of the scenario (empty without), coloured by height; served by the backend.
+    map.addSource('buildings', { type: 'geojson', data: '/api/buildings' })
+    map.addLayer({
+      id: 'buildings-fill',
+      type: 'fill',
+      source: 'buildings',
+      paint: { 'fill-color': BUILDING_COLOR, 'fill-opacity': 0.75 },
     })
 
     map.addLayer({

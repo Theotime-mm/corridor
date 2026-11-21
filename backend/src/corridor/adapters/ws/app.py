@@ -22,6 +22,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import ValidationError
 
 from corridor.adapters.ws.audience import Audience, Viewer
@@ -45,7 +46,7 @@ from corridor.domain.rf.coverage import (
 )
 from corridor.domain.rf.dem import DemProvider
 from corridor.domain.scenario import Scenario
-from corridor.domain.terrain import ground_model
+from corridor.domain.terrain import dem_path, ground_model
 from corridor.domain.zones import nominal_zones
 from corridor.engine.clock import SimClock
 from corridor.engine.engine import CommandRejected, Engine, MissionRuntime
@@ -230,6 +231,15 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.get("/api/buildings")
+    def get_buildings() -> Response:
+        """Building footprints of the scenario with ``height_m``, for the map (GeoJSON); an
+        empty collection without buildings."""
+        terrain = engine.scenario.terrain
+        if terrain.buildings is None:
+            return JSONResponse({"type": "FeatureCollection", "features": []})
+        return FileResponse(dem_path(terrain.buildings), media_type="application/geo+json")
 
     @app.get("/api/rf/coverage")
     async def get_rf_coverage(drone_h_agl_m: float = 20.0) -> dict[str, Any]:
