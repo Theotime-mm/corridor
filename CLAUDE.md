@@ -26,12 +26,16 @@ negotiate corridors past friendly jammers over group chats.
   ⇄ OTS ⇄ ATAK. The backend owns all state; the web front end never talks to OTS directly.
 - Front end: React + Vite + TypeScript, Mantine, MapLibre GL JS (direct, no wrapper), offline
   PMTiles basemap, vis-timeline, Zustand. Details and rules in `README.md`, section "Front end".
+- Backend: FastAPI. Commands and state both go over one WebSocket; contract in
+  `schema/ws.schema.json`, protocol in `docs/architecture.md`.
+- Scenario format and J/S jamming model (free space, circles of Apollonius): see
+  `docs/architecture.md`. Planner design (A* over cell and time): same document, not
+  implemented yet.
 
 ## Still open (do not decide these in code without the team)
 
-- Planner algorithm and RF / jamming model.
-- Backend framework and API contract.
-- Scenario format and demo scenario.
+- Planner implementation details beyond `docs/architecture.md`.
+- Demo scenario tuning (current one: `backend/scenarios/demo.json`).
 - Pitch content.
 
 A standalone prototype of a planner + CoT output exists outside this repo (`../spectrum_sync`).
@@ -48,7 +52,11 @@ It is a reference only, not adopted.
 
 ## Repo conventions
 
-- Python 3.12, uv. `uv run pytest`, `uv run ruff check src tests`,
-  `uv run ruff format --check src tests`, `uv run mypy` (strict). Line length 100.
-- Package: `src/corridor/`. TAK code in `src/corridor/tak/`. Front end will live in `web/`.
+- Python 3.12, uv, project in `backend/`. From `backend/`: `uv run pytest`,
+  `uv run ruff check src tests`, `uv run ruff format --check src tests`, `uv run mypy` (strict).
+  Line length 100.
+- Package: `backend/src/corridor/`. TAK code in `backend/src/corridor/tak/`. Front end will live
+  in `web/`.
+- After changing a WebSocket message model, regenerate the schema from `backend/`:
+  `uv run corridor-schema > ../schema/ws.schema.json` (a test fails otherwise).
 - Docs and code comments in English.

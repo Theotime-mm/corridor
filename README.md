@@ -15,7 +15,7 @@ positions) comes back to Corridor.
 ## Architecture
 
 ```
-                 REST + WebSocket                                   CoT, TCP 8088
+                    WebSocket                                       CoT, TCP 8088
 web front end ◄──────────────────► backend (Python, one process) ◄───────────────► OpenTAKServer ◄──TCP 8088──► ATAK (Android)
 (planning screen)                  ├─ API + simulation clock                         │
                                    ├─ planner                                        └─ RabbitMQ / PostGIS
@@ -24,8 +24,8 @@ web front end ◄──────────────────► backe
 
 - The backend owns all state: scenario, jammer schedules, routes, simulation time. The web front
   end and ATAK are two views of it.
-- Planner: computes the routes from the scenario and the EW schedule. Algorithm and RF model are
-  still being chosen by the team.
+- Planner: computes the routes from the scenario and the EW schedule. J/S jamming model and
+  planner design in [docs/architecture.md](docs/architecture.md).
 - TAK bridge: publishes zones, routes, drone position and notifications as CoT, and reads back
   what ATAK sends.
 - OTS is only the relay to ATAK. The web front end never talks to OTS directly.
@@ -65,8 +65,8 @@ Rules:
 
 - All map code sits in one framework-free module, `web/src/map/mapView.ts` (`setZones`,
   `setRoutes`, `setDrone`, `setPhones`, ...). React components only create the map and call it.
-- The front end holds no business state: actions go to the backend over REST, state comes back
-  over the WebSocket. On (re)connect the backend sends the full state, so a page reload or a
+- The front end holds no business state: commands go to the backend and state comes back over
+  the same WebSocket (protocol in [docs/architecture.md](docs/architecture.md)). On (re)connect the backend sends the full state, so a page reload or a
   dropped connection loses nothing.
 - No internet needed at runtime: fonts, scripts and basemap are bundled.
 - Demo build: `npm run build`, then the backend serves `web/dist/` as static files. One process,
