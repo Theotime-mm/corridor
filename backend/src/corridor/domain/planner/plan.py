@@ -4,18 +4,30 @@ smoothed (``corridor.domain.planner.smooth``) on the masks it was searched on.""
 
 from __future__ import annotations
 
+import itertools
 import math
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from corridor.domain.events import PlanMetrics, PlanStatus, RouteAction, RoutePoint
-from corridor.domain.geo import Cell, Grid, Position
+import numpy as np
+
+from corridor.domain.events import (
+    ChoiceKind,
+    PlanMetrics,
+    PlanStatus,
+    ProposedCut,
+    RouteAction,
+    RouteChoice,
+    RoutePoint,
+)
+from corridor.domain.geo import Cell, Grid, LocalFrame, Position
 from corridor.domain.planner.astar import Step, earliest_path
-from corridor.domain.planner.layers import Layers, mission_layers
+from corridor.domain.planner.layers import Cells, Layers, forbidden_cells, mission_layers
+from corridor.domain.planner.masks import shape_mask
 from corridor.domain.planner.smooth import smooth_route
 from corridor.domain.scenario import Mission, Scenario
 from corridor.domain.state import Cut
-from corridor.domain.zones import ThreatShape, forbidden_shapes
+from corridor.domain.zones import ThreatShape, forbidden_shapes, mission_shapes
 
 ENTRY_MARGIN_S = 30.0
 """Enter a friendly zone no sooner than this after its cut starts."""
@@ -25,6 +37,12 @@ MIN_SAVING_S = 1.0
 """A route using cuts must save more flight time than this to be preferred."""
 COARSE_TAKEOFF_STEP_S = 30.0
 """Takeoff times are swept at this step, then refined at 5 s around the best one."""
+MIN_OPTION_SAVING_S = 30.0
+"""A route needing cuts must save at least this much flight time against the route before it
+(the safe one, or ``one_cut`` for ``fastest``) to be worth asking the command. Below, it is
+still shown, so the pilot sees why it is not offered."""
+OPTION_ACTOR = "planner"
+"""``requested_by`` of the hypothetical cuts the choices are computed with."""
 
 
 @dataclass(frozen=True)
@@ -35,6 +53,7 @@ class MissionPlan:
     metrics: PlanMetrics
     baseline_route: list[RoutePoint]
     optimised_route: list[RoutePoint]
+    choices: list[RouteChoice] = field(default_factory=list)
 
 
 def plan_mission(
@@ -47,18 +66,22 @@ def plan_mission(
     """Baseline, best route on confirmed cuts, best route on every cut; pick and compare.
 
     - ``preview``: scheduled cuts give a better route than confirmed ones. Not flyable until
-      the operator confirms.
+      the command confirms.
     - ``approved``: confirmed cuts give a better route than the baseline.
     - ``baseline``: no cut helps; the optimised route is the baseline.
 
     Routes leave no sooner than the mission departure and ``earliest_departure_s`` (a replan
-    during the run cannot take off in the past). None when even the baseline has no route.
+    during the run cannot take off in the past).
+
+    ``choices`` are compared with the flyable route (``approved`` or ``baseline``), the safe one.
+    Without any route avoiding every jammer (the pilot stands inside a friendly jammer's zone),
+    see ``_plan_through_cuts``. None when no route exists at all.
     """
     if earliest_departure_s > mission.departure_s:
         mission = mission.model_copy(update={"departure_s": earliest_departure_s})
     baseline = plan_route(scenario, mission, grid)
     if baseline is None:
-        return None
+        return _plan_through_cuts(scenario, mission, grid, cuts)
     status: PlanStatus = "baseline"
     optimised = baseline
     confirmed = [c for c in cuts if c.status == "confirmed"]
@@ -66,6 +89,7 @@ def plan_mission(
         approved = plan_route(scenario, mission, grid, confirmed)
         if approved is not None and _saves(approved, optimised):
             status, optimised = "approved", approved
+    flyable = optimised
     if len(confirmed) < len(cuts):
         preview = plan_route(scenario, mission, grid, cuts)
         if preview is not None and _saves(preview, optimised):
@@ -75,7 +99,233 @@ def plan_mission(
         metrics=_metrics(mission, baseline, optimised),
         baseline_route=baseline,
         optimised_route=optimised,
+        choices=route_choices(scenario, mission, grid, cuts, flyable),
     )
+
+
+def _plan_through_cuts(
+    scenario: Scenario, mission: Mission, grid: Grid, cuts: Sequence[Cut]
+) -> MissionPlan | None:
+    """Plan of a mission that cannot fly without a cut, as when its pilot starts inside a
+    friendly jammer's zone: no detour, only routes cutting jammers.
+
+    ``approved`` once confirmed cuts give a route; until then ``preview`` (not flyable), on the
+    scheduled cuts if they give one, else on the first route choice. The route is its own
+    baseline: there is nothing to compare it with. None when no route exists, even with cuts.
+    """
+    confirmed = [c for c in cuts if c.status == "confirmed"]
+    choices = route_choices(scenario, mission, grid, cuts, None)
+    status: PlanStatus = "preview"
+    route = plan_route(scenario, mission, grid, confirmed) if confirmed else None
+    if route is not None:
+        status = "approved"
+    elif cuts:
+        route = plan_route(scenario, mission, grid, cuts)
+    if route is None and choices:
+        route = choices[0].route
+    if route is None:
+        return None
+    return MissionPlan(
+        status=status,
+        metrics=_metrics(mission, route, route),
+        baseline_route=route,
+        optimised_route=route,
+        choices=choices,
+    )
+
+
+def route_choices(
+    scenario: Scenario,
+    mission: Mission,
+    grid: Grid,
+    cuts: Sequence[Cut],
+    safe: list[RoutePoint] | None,
+) -> list[RouteChoice]:
+    """Routes the pilot may pick: ``fastest``, ``one_cut``, ``safe``, in that order.
+
+    ``safe`` is the flyable route as is. ``one_cut`` is the best of the routes cutting a single
+    friendly jammer, ``fastest`` the route cutting every jammer it needs (``_with_cuts``).
+    Jammers with a cut not over by departure are left alone: they are already being dealt
+    with.
+
+    ``one_cut`` is shown as soon as it is faster than ``safe`` (``MIN_SAVING_S``), and is
+    ``worth_asking`` only if it saves ``MIN_OPTION_SAVING_S``: the pilot always sees the direct
+    route and how little it would gain. ``fastest`` is shown only when it cuts more than one
+    jammer and is worth asking against ``one_cut`` (or against ``safe`` without ``one_cut``):
+    a second direct route saving a few seconds more would only clutter the list.
+    """
+
+    def choice(
+        kind: ChoiceKind, cuts: list[ProposedCut], route: list[RoutePoint], worth: bool
+    ) -> RouteChoice:
+        radars = _radars_crossed(scenario, mission, route)
+        return _choice(mission, kind, cuts, route, safe, radars, worth)
+
+    # No safe route: the pilot cannot fly without a cut, so every direct route is worth asking.
+    choices = [] if safe is None else [choice("safe", [], safe, True)]
+    start, goal = grid.cell_of(mission.launch), grid.cell_of(mission.target)
+    if start is None or goal is None:
+        return choices
+    busy = {c.jammer for c in cuts if c.end_s > mission.departure_s}
+    free = [
+        z.threat
+        for z in mission_shapes(scenario, mission)
+        if z.kind == "friendly_jammer" and z.threat not in busy
+    ]
+    confirmed = [c for c in cuts if c.status == "confirmed"]
+    singles = [
+        found
+        for found in (_with_cuts(scenario, mission, grid, confirmed, [j]) for j in free)
+        if found is not None
+    ]
+    reference = safe
+    if singles:
+        one_cut = min(singles, key=lambda f: flight_s(f[0]))
+        gain = math.inf if safe is None else flight_s(safe) - flight_s(one_cut[0])
+        if gain > MIN_SAVING_S:
+            worth = gain >= MIN_OPTION_SAVING_S
+            choices.insert(0, choice("one_cut", one_cut[1], one_cut[0], worth))
+            reference = one_cut[0]
+    if len(free) > 1:
+        fastest = _with_cuts(scenario, mission, grid, confirmed, free)
+        if (
+            fastest is not None
+            and len(fastest[1]) > 1
+            and (
+                reference is None
+                or flight_s(reference) - flight_s(fastest[0]) >= MIN_OPTION_SAVING_S
+            )
+        ):
+            choices.insert(0, choice("fastest", fastest[1], fastest[0], True))
+    return choices
+
+
+def _with_cuts(
+    scenario: Scenario,
+    mission: Mission,
+    grid: Grid,
+    confirmed: Sequence[Cut],
+    jammers: Sequence[str],
+) -> tuple[list[RoutePoint], list[ProposedCut]] | None:
+    """Fastest route if ``jammers`` could be cut, and the cut windows it needs.
+
+    The windows come from the route the drone would fly if those jammers were off for the
+    whole flight, taking off at departure: for each zone it enters, from the first to the
+    last moment it is in a cell the zone touches, widened by the entry and exit margins. A
+    jammer whose zone the route does not enter needs no cut. The route is then searched again
+    with those windows only, so the result is exactly what scheduling the cuts gives. A window
+    may start before departure: a drone taking off inside the zone needs the jammer off from
+    its take-off, margin included. ``confirmed`` cuts hold in both
+    searches. None when no route fits the battery or no jammer needs cutting.
+    """
+    start, goal = grid.cell_of(mission.launch), grid.cell_of(mission.target)
+    if start is None or goal is None:
+        return None
+    departure = mission.departure_s
+    end = departure + mission.battery_max_s
+    held = [w for w in (_usable(c) for c in confirmed) if w is not None]
+    off = [_hypothetical(j, departure, end) for j in jammers]
+    layers = mission_layers(scenario, mission, grid, [*held, *off], departure, end)
+    path = _path(grid, mission, layers, start, goal, departure, end)
+    if path is None:
+        return None
+    steps, takeoff = path
+    cells = _jammer_cells(scenario, mission, grid, jammers)
+    windows: list[Cut] = []
+    for jammer in jammers:
+        jammed = cells.get(jammer)
+        if jammed is None:
+            continue
+        presence = _presence(steps, jammed)
+        if presence is None:
+            continue
+        first = presence[0]
+        if jammed[0, start[1], start[0]]:  # taking off inside the zone: off from take-off
+            first = min(first, takeoff)
+        windows.append(
+            _hypothetical(
+                jammer,
+                max(0.0, math.floor(first - ENTRY_MARGIN_S)),
+                math.ceil(presence[1] + EXIT_MARGIN_S),
+            )
+        )
+    usable = [w for w in (_usable(c) for c in windows) if w is not None]
+    if not usable or len(usable) < len(windows):
+        return None
+    horizon = max([departure, *(w.end_s for w in windows)]) + mission.battery_max_s
+    layers = mission_layers(scenario, mission, grid, [*held, *usable], departure, horizon)
+    route = _search(grid, mission, layers, start, goal, departure, horizon)
+    if route is None or flight_s(route) > mission.battery_max_s:
+        return None
+    # Smoothed on the masks of the windows, like any planned route: it stays inside them.
+    route = smooth_route(
+        route, grid, layers.timed, mission.cruise_speed_mps, altitudes=layers.altitudes
+    )
+    proposed = [ProposedCut(jammer=w.jammer, start_s=w.start_s, end_s=w.end_s) for w in windows]
+    return route, proposed
+
+
+def _jammer_cells(
+    scenario: Scenario, mission: Mission, grid: Grid, jammers: Sequence[str]
+) -> dict[str, Cells]:
+    """Cells each friendly jammer of ``jammers`` forbids, ``[level, row, col]``, as the planner
+    masks them: its 2D zone (one level) or its 3D zone through the terrain."""
+    if scenario.terrain.mode == "2d":
+        frame = LocalFrame(mission.launch)
+        return {
+            z.threat: shape_mask(grid, z, frame)[np.newaxis]
+            for z in forbidden_shapes(scenario, mission)
+            if z.kind == "friendly_jammer" and z.threat in jammers
+        }
+    friendly, _ = forbidden_cells(scenario, mission, grid)
+    return {j: c for j, c in friendly.items() if j in jammers}
+
+
+def _choice(
+    mission: Mission,
+    kind: ChoiceKind,
+    cuts: list[ProposedCut],
+    route: list[RoutePoint],
+    safe: list[RoutePoint] | None,
+    radars: list[str],
+    worth: bool,
+) -> RouteChoice:
+    route_s = flight_s(route)
+    safe_s = route_s if safe is None else flight_s(safe)  # nothing to save against
+    return RouteChoice(
+        kind=kind,
+        cuts=cuts,
+        route=route,
+        flight_s=route_s,
+        battery_used_pct=100 * route_s / mission.battery_max_s,
+        saved_s=safe_s - route_s,
+        saved_pct=100 * (safe_s - route_s) / safe_s,
+        radars=radars,
+        worth_asking=worth,
+    )
+
+
+RADAR_CHECK_M = 50.0
+"""Step along a route when looking for the radar zones it crosses."""
+
+
+def _radars_crossed(scenario: Scenario, mission: Mission, route: list[RoutePoint]) -> list[str]:
+    """Radars whose exact zone ``route`` enters, in the order it meets them."""
+    radars = [z for z in mission_shapes(scenario, mission) if z.kind == "radar"]
+    if not radars:
+        return []
+    frame = LocalFrame(mission.launch)
+    xy = [frame.to_xy(Position(lat=p.lat, lon=p.lon)) for p in route]
+    crossed: list[str] = []
+    for a, b in itertools.pairwise(xy):
+        steps = max(1, math.ceil(math.dist(a, b) / RADAR_CHECK_M))
+        for i in range(steps + 1):
+            x = a[0] + (b[0] - a[0]) * i / steps
+            y = a[1] + (b[1] - a[1]) * i / steps
+            for radar in radars:
+                if radar.threat not in crossed and radar.contains(x, y):
+                    crossed.append(radar.threat)
+    return crossed
 
 
 def plan_route(
@@ -234,6 +484,21 @@ def _search(
 ) -> list[RoutePoint] | None:
     """Route taking off at ``takeoff``; None if it cannot reach the goal cell by
     ``deadline_s``."""
+    path = _path(grid, mission, layers, start, goal, takeoff, deadline_s, start_level)
+    return None if path is None else _route(grid, mission, *path, layers.altitudes)
+
+
+def _path(
+    grid: Grid,
+    mission: Mission,
+    layers: Layers,
+    start: Cell,
+    goal: Cell,
+    takeoff: float,
+    deadline_s: float,
+    start_level: int = 0,
+) -> tuple[list[Step], float] | None:
+    """Cell steps and actual takeoff time of ``_search``, before they become a route."""
     speed = mission.cruise_speed_mps
     first_leg_s = math.dist(grid.to_xy(mission.launch), _centre(grid, start)) / speed
     steps = earliest_path(
@@ -253,7 +518,32 @@ def _search(
         # Hovering over the launch cell: better spent on the ground.
         takeoff += first.depart_s - first.arrive_s
         steps = [Step(first.cell, first.depart_s, first.depart_s, first.level), *steps[1:]]
-    return _route(grid, mission, steps, takeoff, layers.altitudes)
+    return steps, takeoff
+
+
+def _hypothetical(jammer: str, start_s: float, end_s: float) -> Cut:
+    return Cut(
+        id=f"option-{jammer}",
+        jammer=jammer,
+        start_s=start_s,
+        end_s=end_s,
+        status="scheduled",
+        requested_by=OPTION_ACTOR,
+    )
+
+
+def _presence(steps: list[Step], cells: Cells) -> tuple[float, float] | None:
+    """First and last instant the drone is in, or moving from or to, a cell of ``cells``
+    (``[level, row, col]``) at its level."""
+
+    def forbidden(step: Step) -> bool:
+        return bool(cells[min(step.level, cells.shape[0] - 1), step.cell[1], step.cell[0]])
+
+    times = [t for s in steps if forbidden(s) for t in (s.arrive_s, s.depart_s)]
+    for a, b in itertools.pairwise(steps):
+        if forbidden(a) or forbidden(b):
+            times += [a.depart_s, b.arrive_s]
+    return (min(times), max(times)) if times else None
 
 
 def _route(

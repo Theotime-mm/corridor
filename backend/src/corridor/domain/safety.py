@@ -45,6 +45,9 @@ class Flight:
     hold_until_s: float = 0.0
     hold_in_air: bool = False
     past_holds_air_s: float = 0.0
+    through_jammers: frozenset[str] = frozenset()
+    """Friendly jammers the pilot chose to fly straight through while on (``on_timeout``
+    cross after a refusal): the safety rule leaves them alone."""
 
     def route_time(self, now: float) -> float:
         """Where on its schedule the drone is at sim time ``now``."""
@@ -150,7 +153,9 @@ def schedule_violation(
         for c in cuts
         if c.status == "confirmed"
     ]
-    friendly = [z for z in zones if z.kind == "friendly_jammer"]
+    friendly = [
+        z for z in zones if z.kind == "friendly_jammer" and z.threat not in flight.through_jammers
+    ]
     t, end = flight.route_time(now), flight.route[-1].t
     while t <= end:
         position, action = position_at(flight.route, t)
@@ -162,6 +167,8 @@ def schedule_violation(
                 x, y = frame.to_xy(position)
                 inside = [z.threat for z in friendly if z.contains(x, y)]
             for jammer in inside:
+                if jammer in flight.through_jammers:
+                    continue  # flown through on purpose (plan B straight anyway)
                 if not any(j == jammer and a <= actual <= b for j, a, b in windows):
                     return jammer
         t += CHECK_STEP_S
