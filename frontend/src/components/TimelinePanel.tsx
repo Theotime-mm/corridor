@@ -2,11 +2,13 @@
 // phase) and one for the detour it is compared with. The orange cursor follows live time; drag
 // it to scrub (map follows), "Back to live" resets.
 import { useEffect, useRef } from 'react'
+import { ActionIcon, Button, Group, Text, Tooltip } from '@mantine/core'
 import { Timeline } from 'vis-timeline/standalone'
 import 'vis-timeline/styles/vis-timeline-graph2d.min.css'
 import { clockLabel, type Phase, routePhases } from '../domain/view'
 import { useLiveSimTime } from '../hooks/useSimNow'
 import { useStore } from '../store'
+import { CrosshairIcon, RotateCcwIcon, ZoomInIcon, ZoomOutIcon } from './Icons'
 
 const CURSOR = 'cursor'
 
@@ -40,8 +42,19 @@ export function TimelinePanel() {
   const cuts = useStore((s) => s.cuts)
   const plan = useStore((s) => s.plan)
   const viewTimeS = useStore((s) => s.viewTimeS)
+  const setViewTime = useStore((s) => s.setViewTime)
   const live = useLiveSimTime(4)
   const start = snapshot?.scenario.start_time
+
+  const fitTimeline = () => {
+    if (!snapshot) return
+    const st = snapshot.scenario.start_time
+    const endS = Math.max(
+      1800,
+      snapshot.scenario.mission.battery_max_s + snapshot.scenario.mission.departure_s,
+    )
+    timeline.current?.setWindow(toTl(st, 0), toTl(st, endS), { animation: true })
+  }
 
   // Create once the scenario is known (groups and time origin come from it).
   useEffect(() => {
@@ -66,6 +79,11 @@ export function TimelinePanel() {
     tl.addCustomTime(toTl(st, 0), CURSOR)
     tl.on('timechange', (props: { id: string; time: Date }) => {
       if (props.id === CURSOR) useStore.getState().setViewTime(Math.max(0, fromTl(st, props.time)))
+    })
+    tl.on('click', (props: { time?: Date; what?: string }) => {
+      if (props.time && (props.what === 'background' || props.what === 'axis' || props.what === 'item')) {
+        useStore.getState().setViewTime(Math.max(0, fromTl(st, props.time)))
+      }
     })
     timeline.current = tl
     return () => {
@@ -117,5 +135,103 @@ export function TimelinePanel() {
     timeline.current.setCustomTime(toTl(start, viewTimeS ?? live), CURSOR)
   }, [live, viewTimeS, start])
 
-  return <div ref={container} className="timeline" />
+  return (
+    <div className="timeline-shell">
+      <Group className="timeline-header" justify="space-between" wrap="nowrap">
+        <Group gap="md" wrap="nowrap">
+          <Text size="11px" fw={700} c="dimmed" style={{ letterSpacing: '0.06em' }}>
+            4D SCHEDULE &amp; ROUTE TIMELINE
+          </Text>
+          <Group gap="xs" wrap="nowrap" visibleFrom="sm">
+            <TimelineChip color="#f08c00" label="Scheduled cut" />
+            <TimelineChip color="#2f9e44" label="Confirmed cut" />
+            <TimelineChip color="#495057" label="Ground wait" />
+            <TimelineChip color="#22b8cf" label="Fly" />
+            <TimelineChip color="#1971c2" label="Hover" />
+            <TimelineChip color="#2f9e44" borderColor="#8ce99a" label="Zone crossing" />
+            <TimelineChip color="transparent" borderColor="#adb5bd" label="Detour" dashed />
+          </Group>
+        </Group>
+
+        <Group gap={4} wrap="nowrap">
+          {viewTimeS !== null && (
+            <Button
+              size="compact-xs"
+              variant="light"
+              color="orange"
+              leftSection={<RotateCcwIcon size={11} />}
+              onClick={() => setViewTime(null)}
+            >
+              Back to live
+            </Button>
+          )}
+          <Tooltip label="Zoom in">
+            <ActionIcon
+              size="xs"
+              variant="subtle"
+              color="gray"
+              aria-label="Zoom timeline in"
+              onClick={() => timeline.current?.zoomIn(0.4)}
+            >
+              <ZoomInIcon size={13} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Zoom out">
+            <ActionIcon
+              size="xs"
+              variant="subtle"
+              color="gray"
+              aria-label="Zoom timeline out"
+              onClick={() => timeline.current?.zoomOut(0.4)}
+            >
+              <ZoomOutIcon size={13} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Fit full mission timeline">
+            <ActionIcon
+              size="xs"
+              variant="subtle"
+              color="gray"
+              aria-label="Fit timeline"
+              onClick={fitTimeline}
+            >
+              <CrosshairIcon size={13} />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
+      </Group>
+
+      <div ref={container} className="timeline" />
+    </div>
+  )
+}
+
+interface TimelineChipProps {
+  readonly color: string
+  readonly borderColor?: string
+  readonly label: string
+  readonly dashed?: boolean
+}
+
+function TimelineChip({ color, borderColor, label, dashed }: TimelineChipProps) {
+  const borderStyle = dashed ? 'dashed' : 'solid'
+  const border = borderColor ? `1px ${borderStyle} ${borderColor}` : undefined
+  return (
+    <Group gap={4} wrap="nowrap">
+      <span
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: 2,
+          background: color,
+          border,
+          display: 'inline-block',
+          flexShrink: 0,
+        }}
+      />
+      <Text size="10px" c="dimmed">
+        {label}
+      </Text>
+    </Group>
+  )
 }

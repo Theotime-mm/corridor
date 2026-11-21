@@ -1,0 +1,51 @@
+{
+  "start_time": "2026-11-21T14:00:00Z",
+  "js_threshold_db": 0,
+  "friendly_jammers": [
+    {
+      "id": "J-MIDTOWN",
+      "operator_callsign": "EW-NYC",
+      "pos": {
+        "lat": 40.7550,
+        "lon": -73.9850
+      },
+      "eirp_w": 20,
+      "bands": [
+        "2.4GHz"
+      ],
+      "cuts": []
+    }
+  ],
+  "enemy_threats": [
+    {
+      "type": "jammer",
+      "id": "E-WATERFRONT",
+      "pos": {
+        "lat": 40.7180,
+        "lon": -74.0320
+      },
+      "eirp_w": 25,
+      "bands": [
+        "2.4GHz"
+      ]
+    }
+  ],
+  "mission": {
+    "id": "M-NYC",
+    "drone_id": "UAV-NYC",
+    "pilot_callsign": "PILOT-1",
+    "launch": {
+      "lat": 40.7030,
+      "lon": -74.0150
+    },
+    "target": {
+      "lat": 40.7950,
+      "lon": -73.9550
+    },
+    "band": "2.4GHz",
+    "link_eirp_w": 15,
+    "cruise_speed_mps": 16,
+    "battery_max_s": 2400,
+    "departure_s": 600
+  }
+}

@@ -3,7 +3,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from corridor.domain.scenario import EnemyRadar, Scenario
+from corridor.domain.scenario import EnemyJammer, EnemyRadar, Scenario
 from corridor.domain.state import WorldState
 
 
@@ -17,7 +17,32 @@ def test_demo_scenario_loads(scenario: Scenario) -> None:
     assert jammer is not None
     assert jammer.operator_callsign == "EW-J3"
     assert scenario.friendly_jammer("R1") is None
-    assert isinstance(scenario.enemy_threats[0], EnemyRadar)
+    assert isinstance(scenario.enemy_threats[0], EnemyJammer)
+
+
+def test_enemy_radar_threat_loads() -> None:
+    data = {
+        "start_time": "2026-11-21T14:00:00Z",
+        "js_threshold_db": 0,
+        "friendly_jammers": [],
+        "enemy_threats": [
+            {"type": "radar", "id": "R1", "pos": {"lat": 48.0, "lon": 11.0}, "radius_m": 2000}
+        ],
+        "mission": {
+            "id": "M1",
+            "drone_id": "UAV-1",
+            "pilot_callsign": "PILOT-1",
+            "launch": {"lat": 48.0, "lon": 11.0},
+            "target": {"lat": 48.1, "lon": 11.1},
+            "band": "2.4GHz",
+            "link_eirp_w": 10,
+            "cruise_speed_mps": 15,
+            "battery_max_s": 1800,
+            "departure_s": 600,
+        },
+    }
+    s = Scenario.model_validate(data)
+    assert isinstance(s.enemy_threats[0], EnemyRadar)
 
 
 def test_clock_label_uses_start_time(scenario: Scenario) -> None:

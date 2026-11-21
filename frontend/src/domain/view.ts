@@ -12,24 +12,48 @@ export function friendlyZoneState(jammerId: string, cuts: Cut[], t: number): Zon
   return 'on'
 }
 
+function interpolateSegment(a: RoutePoint, b: RoutePoint, t: number) {
+  const f = b.t === a.t ? 0 : (t - a.t) / (b.t - a.t)
+  const moving = a.action === 'fly'
+  return {
+    pos: moving ? { lat: a.lat + f * (b.lat - a.lat), lon: a.lon + f * (b.lon - a.lon) } : a,
+    action: a.action,
+    headingDeg: moving ? bearingDeg(a, b) : null,
+  }
+}
+
 /** Drone position along a timed route; the action holds until the next point. */
-export function positionAt(route: RoutePoint[], t: number): { pos: Position; action: RoutePoint['action'] } | null {
+export function positionAt(
+  route: RoutePoint[],
+  t: number,
+): { pos: Position; action: RoutePoint['action']; headingDeg?: number | null } | null {
   if (route.length === 0) return null
-  if (t <= route[0].t) return { pos: route[0], action: 'ground' }
+  if (t <= route[0].t) {
+    const headingDeg = route.length > 1 ? bearingDeg(route[0], route[1]) : null
+    return { pos: { lat: route[0].lat, lon: route[0].lon }, action: 'ground', headingDeg }
+  }
   for (let i = 0; i < route.length - 1; i++) {
     const a = route[i]
     const b = route[i + 1]
     if (t >= a.t && t <= b.t) {
-      const f = b.t === a.t ? 0 : (t - a.t) / (b.t - a.t)
-      const moving = a.action === 'fly'
-      return {
-        pos: moving ? { lat: a.lat + f * (b.lat - a.lat), lon: a.lon + f * (b.lon - a.lon) } : a,
-        action: a.action,
-      }
+      return interpolateSegment(a, b, t)
     }
   }
-  const last = route[route.length - 1]
-  return { pos: last, action: last.action }
+  const last = route.at(-1)!
+  const prev = route.at(-2) ?? null
+  return {
+    pos: { lat: last.lat, lon: last.lon },
+    action: last.action,
+    headingDeg: prev ? bearingDeg(prev, last) : null,
+  }
+}
+
+/** Bearing in degrees clockwise from north (0..360) from `a` to `b`. */
+export function bearingDeg(a: Position, b: Position): number | null {
+  const dLat = b.lat - a.lat
+  const dLon = (b.lon - a.lon) * Math.cos(((a.lat + b.lat) * Math.PI) / 360)
+  if (Math.abs(dLat) < 1e-9 && Math.abs(dLon) < 1e-9) return null
+  return ((Math.atan2(dLon, dLat) * 180) / Math.PI + 360) % 360
 }
 
 const M_PER_DEG_LAT = 111_320
