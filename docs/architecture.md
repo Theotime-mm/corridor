@@ -626,6 +626,14 @@ above: flying low costs the pilot link. About 0.2 to 0.7 s per mission, then cac
 recomputes nothing; a new threat only its own field). Enemy position margins and masks over
 time come with the 3D masks; `pilot_signal` is the input of the pilot minimum signal.
 
+**3D zones on the map** (`adapters/ws/outlines.py`, `GET /api/zones3d?mission_id=`). The cells
+the planner forbids at each level, per threat (`planner/layers.py:cells_by_threat`, the same
+widening and enemy margins as the masks), traced as polygons: GeoJSON features with `threat`,
+`kind`, `level` (index) and `level_m`. Empty in 2D. The front end fetches them again with each
+snapshot (a threat added or removed comes with one) and shows one level at a time; a friendly
+jammer's outline takes the colour of its cut state like the 2D disc. A radar is the same 2D
+shape at every level.
+
 **Forbidden cells.** Cuts are piecewise constant in time, so `masks.py` precomputes one mask per
 interval between cut boundaries with numpy, not one per time step. A cell is forbidden when it
 lies on the forbidden side of:

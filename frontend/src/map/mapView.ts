@@ -7,6 +7,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import type { Grid, PlanUpdated, Position, RoutePoint, Scenario, Zone } from '../api/protocol'
 import { boundsOf, gridBounds, type ZoneState } from '../domain/view'
+import { levelColor, levelIndex } from './levels'
 
 // Draft basemap: online OSM raster tiles. TODO: offline PMTiles extract of the demo area.
 const STYLE: StyleSpecification = {
@@ -85,6 +86,9 @@ export interface Scene {
   missionZones: Zone[]
   /** Mission-independent footprints (command and operator views). */
   nominalZones: Zone[]
+  /** 3D: the selected mission's zones at the chosen flight level (polygons with ``threat`` and
+   * ``kind``). They replace its 2D zones, except the zones to avoid, which stay 2D. */
+  levelZones?: FeatureCollection | null
   /** Missions whose launch and target can be dragged (on the ground, this viewer may change). */
   movable: string[]
 }
@@ -352,7 +356,7 @@ export function createMapView(container: HTMLElement): MapView {
       source: 'routes',
       filter: ['==', ['get', 'kind'], 'optimised'],
       paint: {
-        'line-color': COLORS.optimised,
+        'line-color': ['coalesce', ['get', 'color'], COLORS.optimised],
         'line-width': ['case', ['get', 'selected'], 4, 2.5],
         'line-opacity': ['case', ['get', 'selected'], 1, 0.6],
       },
@@ -389,7 +393,14 @@ export function createMapView(container: HTMLElement): MapView {
     if (!scene) return
     const g = scene.missionGrid
     const outer = g ? [...gridBounds(g), gridBounds(g)[0]] : null
-    setData('zones', { type: 'FeatureCollection', features: zoneFeatures(scene.missionZones, outer) })
+    const level = scene.levelZones
+    const flat = level ? scene.missionZones.filter((z) => z.kind === 'avoid') : scene.missionZones
+    const levelFeatures: Feature[] = (level?.features ?? []).map((f) => {
+      const threat = String(f.properties?.threat ?? '')
+      const kind = f.properties?.kind as Zone['kind']
+      return { ...f, properties: { ...f.properties, ...kindStyle(kind, states[threat] ?? 'on') } }
+    })
+    setData('zones', { type: 'FeatureCollection', features: [...zoneFeatures(flat, outer), ...levelFeatures] })
     setData('nominal', { type: 'FeatureCollection', features: zoneFeatures(scene.nominalZones, null) })
   }
 
@@ -444,10 +455,28 @@ export function createMapView(container: HTMLElement): MapView {
       renderZones()
     },
     setRoutes(routes) {
-      const line = (kind: string, r: RoutePoint[] | null, mission: string, selected: boolean): Feature[] =>
-        r && r.length > 1
-          ? [{ type: 'Feature', properties: { kind, mission, selected }, geometry: { type: 'LineString', coordinates: r.map((p) => [p.lon, p.lat]) } }]
-          : []
+      const levels = scene?.scenario.terrain.levels_m ?? []
+      const line = (kind: string, r: RoutePoint[] | null, mission: string, selected: boolean): Feature[] => {
+        if (!r || r.length < 2) return []
+        const flat = kind !== 'optimised' || r.every((p) => p.alt_m === null || p.alt_m === undefined)
+        if (flat) {
+          return [{ type: 'Feature', properties: { kind, mission, selected }, geometry: { type: 'LineString', coordinates: r.map((p) => [p.lon, p.lat]) } }]
+        }
+        // 3D: one segment per leg, coloured by its flight level (a climb is a leg in place).
+        const legs: Feature[] = []
+        for (let i = 0; i + 1 < r.length; i++) {
+          const a = r[i]
+          const b = r[i + 1]
+          const index = Math.max(levelIndex(levels, a.alt_m), levelIndex(levels, b.alt_m))
+          const color = index >= 0 ? levelColor(index) : undefined
+          legs.push({
+            type: 'Feature',
+            properties: { kind, mission, selected, color },
+            geometry: { type: 'LineString', coordinates: [[a.lon, a.lat], [b.lon, b.lat]] },
+          })
+        }
+        return legs
+      }
       const features = routes.flatMap((r) => [
         ...(r.selected ? line('baseline', r.baseline, r.mission, true) : []),
         ...line('optimised', r.optimised, r.mission, r.selected),
@@ -555,9 +584,13 @@ export function createMapView(container: HTMLElement): MapView {
 }
 
 function zoneStyle(z: Zone, state: ZoneState): { color: string; opacity: number } {
-  if (z.kind === 'radar') return { color: COLORS.radar, opacity: 0.2 }
-  if (z.kind === 'enemy_jammer') return { color: COLORS.enemy, opacity: 0.2 }
-  if (z.kind === 'avoid') return { color: COLORS.avoid, opacity: 0.12 }
+  return kindStyle(z.kind, state)
+}
+
+function kindStyle(kind: Zone['kind'], state: ZoneState): { color: string; opacity: number } {
+  if (kind === 'radar') return { color: COLORS.radar, opacity: 0.2 }
+  if (kind === 'enemy_jammer') return { color: COLORS.enemy, opacity: 0.2 }
+  if (kind === 'avoid') return { color: COLORS.avoid, opacity: 0.12 }
   if (state === 'cut') return { color: COLORS.friendlyCut, opacity: 0.08 }
   if (state === 'pending') return { color: COLORS.friendlyPending, opacity: 0.18 }
   return { color: COLORS.friendlyOn, opacity: 0.22 }
