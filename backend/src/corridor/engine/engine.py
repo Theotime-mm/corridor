@@ -54,7 +54,7 @@ from corridor.domain.safety import (
 )
 from corridor.domain.scenario import Scenario
 from corridor.domain.state import Cut, WorldState
-from corridor.domain.zones import mission_discs
+from corridor.domain.zones import mission_shapes
 from corridor.engine.clock import SimClock
 from corridor.engine.replan import Replanner
 
@@ -90,7 +90,7 @@ class Engine:
         self._subscribers: list[Subscriber] = []
         self._cut_ids = itertools.count(1)
         self._frame = LocalFrame(scenario.mission.launch)
-        self._discs = mission_discs(scenario)
+        self._zones = mission_shapes(scenario)
         self._last_tick_s = clock.now()
 
     def subscribe(self, subscriber: Subscriber) -> None:
@@ -182,7 +182,7 @@ class Engine:
         events: list[Event] = []
         if not flight.fallback_requested:
             cuts = list(self.state.cuts.values())
-            zone = schedule_violation(flight, now, self._frame, self._discs, cuts)
+            zone = schedule_violation(flight, now, self._frame, self._zones, cuts)
             if zone is not None:
                 flight.fallback_requested = True
                 text = (

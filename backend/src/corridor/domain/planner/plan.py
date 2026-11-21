@@ -12,7 +12,7 @@ from corridor.domain.planner.astar import Step, earliest_path
 from corridor.domain.planner.masks import TimedMasks, timed_masks
 from corridor.domain.scenario import Mission, Scenario
 from corridor.domain.state import Cut
-from corridor.domain.zones import ThreatDisc, mission_discs
+from corridor.domain.zones import ThreatShape, mission_shapes
 
 ENTRY_MARGIN_S = 30.0
 """Enter a friendly zone no sooner than this after its cut starts."""
@@ -88,7 +88,7 @@ def plan_route(scenario: Scenario, grid: Grid, cuts: Iterable[Cut] = ()) -> list
     if start is None or goal is None:
         return None
     windows = [w for w in (_usable(c) for c in cuts) if w is not None]
-    zones = mission_discs(scenario)
+    zones = mission_shapes(scenario)
     latest = max([mission.departure_s, *(w.end_s for w in windows)])
     timed = timed_masks(
         grid,
@@ -141,7 +141,7 @@ def plan_fallback(
         return None
     timed = timed_masks(
         grid,
-        mission_discs(scenario),
+        mission_shapes(scenario),
         LocalFrame(mission.launch),
         [],
         now_s,
@@ -177,9 +177,13 @@ def _usable(cut: Cut) -> Cut | None:
 
 
 def _latest_useful_takeoff(
-    mission: Mission, zones: list[ThreatDisc], windows: list[Cut], cell_m: float
+    mission: Mission, zones: list[ThreatShape], windows: list[Cut], cell_m: float
 ) -> float:
-    """Past this, even a straight flight reaches every cut zone after its window closed."""
+    """Past this, even a straight flight reaches every cut zone after its window closed.
+
+    For a directional jammer the zone lies within its main disc, so the distance to that disc
+    is a lower bound: the sweep may go a little too far, never stop too early.
+    """
     latest = mission.departure_s
     half_diagonal = cell_m * math.sqrt(2) / 2
     for window in windows:
