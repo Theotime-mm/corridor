@@ -1232,6 +1232,14 @@
           },
           "title": "Optimised Route",
           "type": "array"
+        },
+        "profile": {
+          "description": "Ground and drone height under the optimised route.",
+          "items": {
+            "$ref": "#/$defs/ProfilePoint"
+          },
+          "title": "Profile",
+          "type": "array"
         }
       },
       "required": [
@@ -1241,7 +1249,8 @@
         "status",
         "metrics",
         "baseline_route",
-        "optimised_route"
+        "optimised_route",
+        "profile"
       ],
       "title": "PlanUpdated",
       "type": "object"
@@ -1287,6 +1296,41 @@
         "lon"
       ],
       "title": "Position",
+      "type": "object"
+    },
+    "ProfilePoint": {
+      "additionalProperties": false,
+      "description": "A sample of the altitude profile under a route.",
+      "properties": {
+        "distance_m": {
+          "description": "Along the route from take-off.",
+          "title": "Distance M",
+          "type": "number"
+        },
+        "ground_m": {
+          "description": "Ground elevation above sea level; 0 without a map.",
+          "title": "Ground M",
+          "type": "number"
+        },
+        "alt_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Drone height above the ground, None if unknown.",
+          "title": "Alt M"
+        }
+      },
+      "required": [
+        "distance_m",
+        "ground_m",
+        "alt_m"
+      ],
+      "title": "ProfilePoint",
       "type": "object"
     },
     "ReferenceLink": {
@@ -1402,13 +1446,27 @@
           ],
           "title": "Action",
           "type": "string"
+        },
+        "alt_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Height above the ground, metres; None while the planner is 2D.",
+          "title": "Alt M"
         }
       },
       "required": [
         "lat",
         "lon",
         "t",
-        "action"
+        "action",
+        "alt_m"
       ],
       "title": "RoutePoint",
       "type": "object"
@@ -1467,6 +1525,9 @@
           "title": "Enemy Threats",
           "type": "array"
         },
+        "terrain": {
+          "$ref": "#/$defs/Terrain"
+        },
         "pilots": {
           "items": {
             "$ref": "#/$defs/Pilot"
@@ -1491,6 +1552,7 @@
         "command_callsign",
         "friendly_jammers",
         "enemy_threats",
+        "terrain",
         "pilots",
         "missions"
       ],
@@ -1750,6 +1812,46 @@
         "cuts"
       ],
       "title": "Snapshot",
+      "type": "object"
+    },
+    "Terrain": {
+      "additionalProperties": false,
+      "description": "Ground under the area and flight levels above it (``corridor.domain.terrain``).",
+      "properties": {
+        "dem": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Elevation file (GeoTIFF, metres above sea level) in backend/data/, or an absolute path. None: flat ground.",
+          "title": "Dem"
+        },
+        "levels_m": {
+          "default": [
+            30.0,
+            60.0,
+            120.0,
+            250.0
+          ],
+          "description": "Flight levels, metres above the ground, lowest first.",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 1,
+          "title": "Levels M",
+          "type": "array"
+        }
+      },
+      "required": [
+        "dem",
+        "levels_m"
+      ],
+      "title": "Terrain",
       "type": "object"
     },
     "ThreatAdded": {

@@ -92,6 +92,18 @@ class RoutePoint(Model):
     lon: float
     t: float
     action: RouteAction
+    alt_m: float | None = Field(
+        default=None,
+        description="Height above the ground, metres; None while the planner is 2D.",
+    )
+
+
+class ProfilePoint(Model):
+    """A sample of the altitude profile under a route."""
+
+    distance_m: float = Field(description="Along the route from take-off.")
+    ground_m: float = Field(description="Ground elevation above sea level; 0 without a map.")
+    alt_m: float | None = Field(description="Drone height above the ground, None if unknown.")
 
 
 class PlanMetrics(Model):
@@ -111,6 +123,9 @@ class PlanUpdated(Model):
     metrics: PlanMetrics
     baseline_route: list[RoutePoint] = Field(description="As if every jammer stayed on.")
     optimised_route: list[RoutePoint]
+    profile: list[ProfilePoint] = Field(
+        default_factory=list, description="Ground and drone height under the optimised route."
+    )
 
 
 class DroneState(Model):
