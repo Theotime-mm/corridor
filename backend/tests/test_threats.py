@@ -210,8 +210,9 @@ def receive(ws: WebSocketTestSession) -> dict[str, Any]:
 
 
 def test_clients_concerned_get_a_new_snapshot(two_missions: Scenario) -> None:
-    client = TestClient(create_app(two_missions, clock_factor=20, cell_m=100))
+    app = create_app(two_missions, clock_factor=20, cell_m=100)
     with (
+        TestClient(app) as client,  # one event loop for every connection
         client.websocket_connect("/ws?callsign=CMD") as command,
         client.websocket_connect("/ws?callsign=PILOT-1") as pilot_1,
         client.websocket_connect("/ws?callsign=PILOT-2") as pilot_2,
