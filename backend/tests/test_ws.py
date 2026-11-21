@@ -293,3 +293,10 @@ def test_an_updated_mission_resyncs_every_client(two_missions: Scenario) -> None
         gained = [receive(new_operator)["payload"] for _ in range(2)]
         assert [p["type"] for p in gained] == ["mission.updated", "snapshot"]
         assert [m["constraints"]["mission"] for m in gained[1]["missions"]] == ["M1", "M2"]
+
+
+def test_buildings_endpoint_is_empty_without_buildings(scenario: Scenario) -> None:
+    client = TestClient(create_app(scenario, clock_factor=20, cell_m=100))
+    response = client.get("/api/buildings")
+    assert response.status_code == 200
+    assert response.json() == {"type": "FeatureCollection", "features": []}

@@ -54,6 +54,7 @@ export function MapPanel() {
   const [showRf, setShowRf] = useState(false)
   const [showHeatmap, setShowHeatmap] = useState(false)
   const [showRelief, setShowRelief] = useState(true)
+  const [showBuildings, setShowBuildings] = useState(true)
   const [is3D, setIs3D] = useState(false)
   const [legendOpen, setLegendOpen] = useState(false)
   const [probe, setProbe] = useState<ProbeData | null>(null)
@@ -104,8 +105,9 @@ export function MapPanel() {
       rf: showRf,
       heatmap: showHeatmap,
       relief: showRelief,
+      buildings: showBuildings,
     })
-  }, [showZones, showBaseline, showRf, showHeatmap, showRelief])
+  }, [showZones, showBaseline, showRf, showHeatmap, showRelief, showBuildings])
 
   useEffect(() => {
     if (!showRf) return
@@ -292,6 +294,15 @@ export function MapPanel() {
           </Button>
           <Button
             size="compact-xs"
+            variant={showBuildings ? 'light' : 'subtle'}
+            color="gray"
+            onClick={() => setShowBuildings((v) => !v)}
+            title="Toggle buildings, brighter when taller"
+          >
+            Buildings
+          </Button>
+          <Button
+            size="compact-xs"
             variant={is3D ? 'filled' : 'subtle'}
             color={is3D ? 'teal' : 'gray'}
             onClick={() => {
@@ -398,6 +409,7 @@ const LEGEND: { label: string; color: string; kind: 'area' | 'line' | 'dash' }[]
   { label: 'Cut confirmed (passable)', color: COLORS.friendlyCut, kind: 'area' },
   { label: 'Enemy jammer', color: COLORS.enemy, kind: 'area' },
   { label: 'Radar', color: COLORS.radar, kind: 'area' },
+  { label: 'Building (brighter = taller)', color: '#ced4da', kind: 'area' },
   { label: 'Zone to avoid (not enforced yet)', color: COLORS.avoid, kind: 'area' },
   { label: 'Detour (all jammers on)', color: COLORS.baseline, kind: 'dash' },
   { label: 'Planned route', color: ROUTE_COLORS.approved, kind: 'line' },

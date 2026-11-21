@@ -125,6 +125,13 @@ Two kinds of data, kept apart:
   - `low`, for terrain masking: lowest ground in the cell. A hill or building hiding the drone
     from an emitter is never taken higher than it is, so no shadow is assumed where there is
     none (jamming zones, pilot link, radars).
+- **Buildings** (`terrain.buildings`, optional, needs `dem`): OpenStreetMap footprints with
+  `height_m` (the `height` tag, else `building:levels` x 3 m, else 10 m), downloaded once per
+  demo area with `uv run python tools/fetch_buildings.py <name> S W N E` into
+  `backend/data/buildings_<name>.geojson`. Raised into the elevation: every pixel a footprint
+  touches becomes ground + height (ground: lowest elevation within 5 pixels of its centre, so a
+  roof on a slope may come out a little low). Planner, 3D zones, profile and RF endpoints all
+  see them. `GET /api/buildings` serves the file for the map (empty collection without).
   The Copernicus water body mask is not used (not in `backend/data/`); the rule above covers
   rivers narrower than about two cells. The RF endpoints (`/api/rf/*`) use the same file instead of guessing one
   from the latitude. `mode`: `2d` (default, one layer, free-space discs) or `3d` (the levels,
