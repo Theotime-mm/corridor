@@ -107,7 +107,22 @@ class EnemyJammer(Model):
     )
 
 
-EnemyThreat = Annotated[EnemyRadar | EnemyJammer, Field(discriminator="type")]
+class AvoidZone(Model):
+    """Area the command advises against (reported activity, no located emitter).
+
+    Shown with the threats and in each mission's zones, but not forbidden: the planner may cross
+    it. Making routes avoid it when there is a reasonable alternative is still to do.
+    """
+
+    type: Literal["avoid"] = "avoid"
+    id: str
+    pos: Position
+    radius_m: float = Field(gt=0)
+
+
+EnemyThreat = Annotated[EnemyRadar | EnemyJammer | AvoidZone, Field(discriminator="type")]
+THREAT_PREFIX = {"radar": "R", "jammer": "E", "avoid": "A"}
+"""Id prefix of a threat the command adds, by type."""
 
 
 class Drone(Model):

@@ -66,7 +66,7 @@ backend/scenarios/directional.json   the demo with J3 directional (60° beam to 
 schema/ws.schema.json         generated protocol schema (repository root), consumed by the front end
 ```
 
-Still to write, by whoever owns the piece: the TAK adapter (`adapters/tak`), `inject.enemy_threat`.
+Still to write, by whoever owns the piece: the TAK adapter (`adapters/tak`).
 
 Dependency rule: `domain` imports nothing from `engine` or `adapters`; `engine` imports nothing
 from `adapters`. It can be enforced later with `import-linter` if needed.
@@ -92,7 +92,7 @@ Two kinds of data, kept apart:
 
 | | Scenario | World state |
 |---|---|---|
-| Content | start time, friendly jammers (with optional initial cuts), enemy threats, the pilots and their drone, the missions known at start, the command callsign, the reference link | cuts (scheduled or confirmed), missions requested by pilots, status of each mission; later injected enemy threats |
+| Content | start time, friendly jammers (with optional initial cuts), enemy threats, the pilots and their drone, the missions known at start, the command callsign, the reference link | cuts (scheduled or confirmed), missions requested by pilots, status of each mission; enemy threats and zones to avoid added or removed by the command |
 | Source | `backend/scenarios/*.json`, written by hand for the demo | built by the engine from the scenario, then changed by commands |
 | Lifetime | static during a run | in memory; restart the server to reset |
 
@@ -100,6 +100,9 @@ Two kinds of data, kept apart:
   time field ends in `_s`.
 - Jammers are described by their EIRP (effective isotropic radiated power); the zone they deny
   comes from the J/S (jammer to signal) model below. Radars are discs (`radius_m`).
+- A zone to avoid (`type: "avoid"`, `radius_m`) sits with the enemy threats: reported activity
+  with no located emitter. It is shown and counts as a concerned threat, but the planner may
+  cross it for now (`forbidden_shapes` leaves it out); a high cost instead of nothing is to do.
 - A friendly jammer may have a directional `antenna` (`azimuth_deg` clockwise from north,
   `beamwidth_deg` up to 180, `sidelobe_db` up to 0). Its `eirp_w` is then the main beam EIRP.
   Without `antenna` it is omnidirectional. Enemy jammers are omnidirectional for now.
@@ -421,6 +424,8 @@ Rules enforced today:
 | `mission.update` | unknown mission, mission not in `planned`, actor is neither its pilot nor the command |
 | `mission.launch` | unknown mission, mission not in `planned`, actor is neither its pilot nor the command |
 | `inject.delay` | unknown mission, no drone in flight |
+| `threat.add` | actor is not the command; fields not matching the kind (pydantic); a zone the J/S model cannot draw (jammer on a pilot) |
+| `threat.remove` | actor is not the command, unknown threat |
 | any | `actor` is not the callsign the connection gave (WebSocket adapter) |
 
 ## Engine
@@ -436,6 +441,12 @@ Rules enforced today:
   requests its first plan. `mission.update` moves the launch and target (and departure) of a
   mission still `planned`: same constraints rebuilt in place, plan dropped, new plan requested
   with the next revision, so a plan still on its way for the old points is dropped.
+- Threats: `threat.add` and `threat.remove` (command only) change `scenario.enemy_threats`
+  and recompute the constraints of every mission (zones, grid, concerned threats). The missions
+  the threat concerns (after an add, before a remove) get a new plan while `planned`. A drone in
+  flight keeps its route for now; the command and the pilot are told. Ids are given by the
+  server: `R<n>`, `E<n>`, `A<n>`, the first free. Each plan request carries the current
+  scenario, so the planner worker always sees the current threats.
 - Plans: at startup for every mission, and after every `cut.schedule`, `cut.confirm` or
   `cut.cancel` for the missions the cut's jammer concerns, while they are `planned`, the engine
   requests a plan with the next revision of that mission. The planner only gets the cuts of the
@@ -646,6 +657,8 @@ Server to client:
   the mission may bring jammers, threats and cuts into its view. The client just replaces its
   state, as on connect. `mission.updated` is followed by a fresh `snapshot` for every client:
   the mission may also leave a view (an operator whose jammer it no longer crosses).
+  `threat.added` and `threat.removed` work like `mission.created`, for the command and every
+  client that sees one of the missions the threat concerns.
 
 **`plan.updated`**
 
@@ -676,6 +689,7 @@ Server to client:
 | `cut.scheduled`, `cut.confirmed`, `cut.cancelled` | done | the cut (`requested_for`: the mission it was asked for, if any) |
 | `mission.created` | done | the full mission (drone fields from the pilot); a new `snapshot` follows, then a notification to the pilot and the first `plan.updated` |
 | `mission.updated` | done | the mission with its new points and departure; a new `snapshot` follows for every client (plan back to null until the next `plan.updated`) |
+| `threat.added`, `threat.removed` | done | the threat (or its id) and the missions it concerns; a new `snapshot` follows, then notifications to the command and the pilots, then the new `plan.updated` |
 | `mission.status` | done | mission id; `planned`, `flying`, `arrived` |
 | `notification` | done | `to` (callsign), text, optional action (the button to show and the cut it confirms) |
 | `ack`, `error` | done | `req_id`, reason on error |
@@ -695,7 +709,8 @@ Server to client:
 | `mission.launch` | done | mission id |
 | `clock.set` | done | factor and/or paused |
 | `inject.delay` | done | mission id, `delay_s`: hold the flying drone where it is (demo twist) |
-| `inject.enemy_threat` | to come | demo twist |
+| `threat.add` | done | `kind` (`radar`, `jammer`, `avoid`), `pos`; `radius_m` for a radar or a zone to avoid, `eirp_w` and `bands` for a jammer; optional `position_error_m` (not for a zone to avoid) |
+| `threat.remove` | done | threat id (from the file or added) |
 
 **Contract.** `schema/ws.schema.json` is generated from the pydantic models
 (from `backend/`: `uv run corridor-schema > ../schema/ws.schema.json`) and a test fails when it is out of date. Its

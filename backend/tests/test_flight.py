@@ -40,6 +40,7 @@ class SyncReplanner:
 
     def request(
         self,
+        scenario: Scenario,
         mission: Mission,
         grid: Grid,
         revision: int,
@@ -47,10 +48,11 @@ class SyncReplanner:
         earliest_departure_s: float,
         done: PlanDone,
     ) -> None:
-        done(revision, plan_mission(self.scenario, mission, grid, cuts, earliest_departure_s))
+        done(revision, plan_mission(scenario, mission, grid, cuts, earliest_departure_s))
 
     def request_fallback(
         self,
+        scenario: Scenario,
         mission: Mission,
         grid: Grid,
         revision: int,
@@ -58,7 +60,7 @@ class SyncReplanner:
         now_s: float,
         done: PlanDone,
     ) -> None:
-        done(revision, plan_fallback(self.scenario, mission, grid, position, now_s))
+        done(revision, plan_fallback(scenario, mission, grid, position, now_s))
 
     def close(self) -> None:
         pass

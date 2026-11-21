@@ -27,7 +27,13 @@ from pydantic import ValidationError
 from corridor.adapters.ws.audience import Audience, Viewer
 from corridor.adapters.ws.hub import Hub, Outbox
 from corridor.adapters.ws.schemas import Ack, ClientMessage, Error, MissionView, Snapshot
-from corridor.domain.events import Event, MissionCreated, MissionUpdated
+from corridor.domain.events import (
+    Event,
+    MissionCreated,
+    MissionUpdated,
+    ThreatAdded,
+    ThreatRemoved,
+)
 from corridor.domain.geo import Position
 from corridor.domain.rf.coverage import (
     ContourLevel,
@@ -38,7 +44,7 @@ from corridor.domain.rf.coverage import (
 )
 from corridor.domain.rf.dem import DemProvider, HillFeature, RasterDem, SyntheticDem
 from corridor.domain.scenario import Scenario
-from corridor.domain.zones import Zone, nominal_zones
+from corridor.domain.zones import nominal_zones
 from corridor.engine.clock import SimClock
 from corridor.engine.engine import CommandRejected, Engine, MissionRuntime
 from corridor.engine.replan import Replanner
@@ -59,8 +65,10 @@ async def _tick_forever(engine: Engine) -> None:
         await asyncio.sleep(TICK_S)
 
 
-def snapshot(engine: Engine, audience: Audience, viewer: Viewer, nominal: list[Zone]) -> Snapshot:
+def snapshot(engine: Engine, audience: Audience, viewer: Viewer) -> Snapshot:
+    """Nominal zones come from the current threats: the command adds and removes them."""
     scope = audience.scope(viewer)
+    nominal = nominal_zones(engine.scenario)
     return Snapshot(
         viewer=viewer,
         scenario=audience.scenario_for(viewer),
@@ -216,7 +224,6 @@ def create_app(
     replanner: ReplannerFactory | None = None,
 ) -> FastAPI:
     """Without ``replanner``, nothing is planned. The first plan is requested at startup."""
-    nominal = nominal_zones(scenario)
     planner = replanner(scenario) if replanner else None
     engine = Engine(scenario, cell_m, SimClock(clock_factor), planner)
     audience = Audience(engine)
@@ -226,9 +233,9 @@ def create_app(
         hub.publish(event)
 
         def snapshot_for(viewer: Viewer) -> Snapshot:
-            return snapshot(engine, audience, viewer, nominal)
+            return snapshot(engine, audience, viewer)
 
-        if isinstance(event, MissionCreated):
+        if isinstance(event, MissionCreated | ThreatAdded | ThreatRemoved):
             hub.resync(snapshot_for, lambda viewer: audience.sees(viewer, event))
         elif isinstance(event, MissionUpdated):
             hub.resync(snapshot_for, lambda _: True)
@@ -342,7 +349,7 @@ def create_app(
         if viewer is None:
             await websocket.close(code=UNKNOWN_CALLSIGN, reason=f"unknown callsign {callsign!r}")
             return
-        outbox = hub.connect(viewer, snapshot(engine, audience, viewer, nominal))
+        outbox = hub.connect(viewer, snapshot(engine, audience, viewer))
         sender = asyncio.create_task(_pump(websocket, outbox))
         try:
             while True:

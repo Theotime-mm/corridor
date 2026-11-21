@@ -8,7 +8,7 @@ from pydantic import Field
 
 from corridor.domain.geo import Position
 from corridor.domain.model import Model
-from corridor.domain.scenario import Mission
+from corridor.domain.scenario import EnemyThreat, Mission
 from corridor.domain.state import ClockState, Cut, MissionStatus
 
 
@@ -47,6 +47,23 @@ class MissionUpdated(Model):
 
     type: Literal["mission.updated"] = "mission.updated"
     mission: Mission
+
+
+class ThreatAdded(Model):
+    """The command added an enemy threat or a zone to avoid. Clients that see it get a new
+    snapshot right after: zones, grids and scopes may all have changed."""
+
+    type: Literal["threat.added"] = "threat.added"
+    threat: EnemyThreat
+    missions: list[str] = Field(description="Missions it concerns.")
+
+
+class ThreatRemoved(Model):
+    """The command removed a threat. Clients that see it get a new snapshot right after."""
+
+    type: Literal["threat.removed"] = "threat.removed"
+    threat: str
+    missions: list[str] = Field(description="Missions it concerned.")
 
 
 class MissionStatusChanged(Model):
@@ -132,6 +149,8 @@ Event = Annotated[
     | ClockChanged
     | MissionCreated
     | MissionUpdated
+    | ThreatAdded
+    | ThreatRemoved
     | MissionStatusChanged
     | Notification
     | PlanUpdated

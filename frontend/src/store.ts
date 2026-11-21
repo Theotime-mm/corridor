@@ -172,6 +172,12 @@ export const useStore = create<State>((set, get) => ({
         set(editing ? { ...clockSync, requestDraft: NO_DRAFT } : clockSync)
         return
       }
+      case 'threat.added':
+      case 'threat.removed':
+        // A new snapshot follows with the zones, grids and threats in view; the
+        // notification reaches the feed.
+        set(clockSync)
+        return
       case 'mission.status':
         set(patchMission(p.mission, { status: p.status }))
         return
