@@ -42,6 +42,17 @@ export interface CutDraft {
 
 const LIST: SidePanel = { view: 'list' }
 
+/** What the map (and, for a mission, the timeline) should frame after a click in the sidebar.
+ * `seq` changes on every click, so a second click on the same item frames it again. */
+export interface Focus {
+  kind: 'mission' | 'jammer' | 'threat'
+  id: string
+  seq: number
+}
+
+let focusSeq = 0
+const focusOn = (kind: Focus['kind'], id: string): Focus => ({ kind, id, seq: ++focusSeq })
+
 export interface FeedItem {
   id: number
   atS: number
@@ -74,6 +85,7 @@ interface State {
   listTab: 'missions' | 'objects'
   /** EW cut form; null = closed. */
   cutDraft: CutDraft | null
+  focus: Focus | null
 
   setConn: (conn: ConnStatus) => void
   signIn: (callsign: string) => void
@@ -90,8 +102,10 @@ interface State {
   setRequestDraft: (patch: Partial<RequestDraft>) => void
   /** Map click: sets the point being picked, if any; for a new mission, the target comes next. */
   pickPoint: (pos: Position) => void
-  /** Show a mission in the sidebar; it also becomes the selected mission on the map. */
+  /** Show a mission in the sidebar; it also becomes the selected mission, framed on the map and
+   * the timeline. */
   openMission: (id: string) => void
+  /** Show an object in the sidebar, centred on the map. */
   openObject: (kind: 'jammer' | 'threat', id: string) => void
   /** Back to the lists (the selected mission stays selected on the map). */
   openList: () => void
@@ -115,6 +129,7 @@ const SESSION = {
   panel: LIST,
   listTab: 'missions',
   cutDraft: null,
+  focus: null,
 } satisfies Partial<State>
 
 export const useStore = create<State>((set, get) => ({
@@ -152,8 +167,9 @@ export const useStore = create<State>((set, get) => ({
     const next = draft.picking === 'launch' && draft.editing === null && !draft.target ? 'target' : null
     set({ requestDraft: { ...draft, [draft.picking]: pos, picking: next } })
   },
-  openMission: (id) => set({ panel: { view: 'mission', id }, selectedMission: id }),
-  openObject: (kind, id) => set({ panel: { view: 'object', kind, id } }),
+  openMission: (id) =>
+    set({ panel: { view: 'mission', id }, selectedMission: id, focus: focusOn('mission', id) }),
+  openObject: (kind, id) => set({ panel: { view: 'object', kind, id }, focus: focusOn(kind, id) }),
   openList: () => set({ panel: LIST }),
   setListTab: (listTab) => set({ listTab }),
   openCut: (cutDraft) => set({ cutDraft, requestDraft: NO_DRAFT }),
