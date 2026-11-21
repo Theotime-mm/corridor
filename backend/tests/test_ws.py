@@ -4,7 +4,11 @@ from fastapi.testclient import TestClient
 from starlette.testclient import WebSocketTestSession
 
 from corridor.adapters.ws.app import create_app
+from corridor.domain.geo import Grid
+from corridor.domain.planner.plan import plan_mission
 from corridor.domain.scenario import Scenario
+from corridor.domain.state import Cut
+from corridor.engine.replan import PlanDone, Replanner
 
 
 def receive(ws: WebSocketTestSession) -> dict[str, Any]:
@@ -53,3 +57,32 @@ def test_events_reach_every_client_and_bad_messages_get_an_error(scenario: Scena
         error = receive(a)["payload"]
         assert error["type"] == "error"
         assert error["req_id"] is None
+
+
+def test_plans_reach_the_clients(scenario: Scenario) -> None:
+    def inline(scenario: Scenario, grid: Grid) -> Replanner:
+        class Inline:
+            def request(
+                self, revision: int, cuts: list[Cut], earliest_s: float, done: PlanDone
+            ) -> None:
+                done(revision, plan_mission(scenario, grid, cuts, earliest_s))
+
+            def close(self) -> None:
+                pass
+
+        return Inline()
+
+    app = create_app(scenario, clock_factor=20, cell_m=100, replanner=inline)
+    with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+        snapshot = receive(ws)["payload"]
+        assert snapshot["plan"]["revision"] == 1  # planned at startup
+        assert snapshot["plan"]["status"] == "baseline"
+
+        command = {"type": "cut.schedule", "actor": "EW", "jammer": "J3"}
+        command |= {"start_s": 900, "end_s": 1260}
+        ws.send_json({"req_id": "r1", "command": command})
+        types = [receive(ws)["payload"] for _ in range(4)]
+        plan = next(p for p in types if p["type"] == "plan.updated")
+        assert plan["revision"] == 2
+        assert plan["status"] == "preview"
+        assert plan["metrics"]["saved_pct"] > 5

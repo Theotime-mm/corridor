@@ -80,12 +80,21 @@ def js_disc(
     )
 
 
-def mission_zones(scenario: Scenario) -> list[Zone]:
+@dataclass(frozen=True)
+class ThreatDisc:
+    """Zone of one threat, as a disc in the mission frame (``LocalFrame(mission.launch)``)."""
+
+    threat: str
+    kind: ZoneKind
+    disc: Disc
+
+
+def mission_discs(scenario: Scenario) -> list[ThreatDisc]:
     """Zones that matter to the mission: jammers on its band, every radar."""
     mission = scenario.mission
     frame = LocalFrame(mission.launch)
 
-    def jammer_zone(threat: str, kind: ZoneKind, pos: Position, eirp_w: float) -> Zone:
+    def jammer_zone(threat: str, kind: ZoneKind, pos: Position, eirp_w: float) -> ThreatDisc:
         disc = js_disc(
             (0.0, 0.0),
             frame.to_xy(pos),
@@ -93,7 +102,7 @@ def mission_zones(scenario: Scenario) -> list[Zone]:
             eirp_w,
             scenario.js_threshold_db,
         )
-        return _zone(threat, kind, disc, frame)
+        return ThreatDisc(threat, kind, disc)
 
     zones = [
         jammer_zone(j.id, "friendly_jammer", j.pos, j.eirp_w)
@@ -107,8 +116,14 @@ def mission_zones(scenario: Scenario) -> list[Zone]:
             case EnemyRadar():
                 x, y = frame.to_xy(threat.pos)
                 disc = Disc(x=x, y=y, radius_m=threat.radius_m, forbidden="inside")
-                zones.append(_zone(threat.id, "radar", disc, frame))
+                zones.append(ThreatDisc(threat.id, "radar", disc))
     return zones
+
+
+def mission_zones(scenario: Scenario) -> list[Zone]:
+    """``mission_discs`` as rings, for the front end."""
+    frame = LocalFrame(scenario.mission.launch)
+    return [_zone(z.threat, z.kind, z.disc, frame) for z in mission_discs(scenario)]
 
 
 def planning_grid(scenario: Scenario, cell_m: float) -> Grid:

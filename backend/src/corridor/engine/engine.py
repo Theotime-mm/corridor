@@ -3,6 +3,10 @@
 Everything runs on the asyncio event loop thread and ``submit`` never awaits, so no two
 commands interleave and the state needs no lock. Subscribers are called synchronously and
 must not block (the WebSocket hub only enqueues).
+
+Plans: while the mission is still ``planned``, every change to the cuts requests a new plan
+with a new revision. The plan comes back later, on the event loop thread; a plan whose
+revision is not the latest requested is dropped.
 """
 
 from __future__ import annotations
@@ -28,12 +32,19 @@ from corridor.domain.events import (
     MissionStatusChanged,
     Notification,
     NotificationAction,
+    PlanUpdated,
 )
+from corridor.domain.planner.plan import MissionPlan
 from corridor.domain.scenario import Scenario
 from corridor.domain.state import Cut, WorldState
 from corridor.engine.clock import SimClock
+from corridor.engine.replan import Replanner
 
 Subscriber = Callable[[Event], None]
+
+PLAN_LEAD_WALL_S = 3.0
+"""Wall-clock seconds a plan may take. A replan's earliest takeoff is that far ahead in
+simulated time, so the route does not start in the past by the time it arrives."""
 
 
 class CommandRejected(Exception):
@@ -41,10 +52,16 @@ class CommandRejected(Exception):
 
 
 class Engine:
-    def __init__(self, scenario: Scenario, clock: SimClock) -> None:
+    def __init__(
+        self, scenario: Scenario, clock: SimClock, replanner: Replanner | None = None
+    ) -> None:
+        """Without ``replanner``, nothing is planned."""
         self.scenario = scenario
         self.clock = clock
         self.state = WorldState.from_scenario(scenario)
+        self.plan: PlanUpdated | None = None
+        self._replanner = replanner
+        self._revision = 0
         self._subscribers: list[Subscriber] = []
         self._cut_ids = itertools.count(1)
 
@@ -57,10 +74,45 @@ class Engine:
         Raises CommandRejected, leaving the state unchanged.
         """
         events = self._apply(command)
+        self._publish(events)
+        if isinstance(command, ScheduleCut | ConfirmCut | CancelCut):
+            self.request_plan()
+        return events
+
+    def request_plan(self) -> None:
+        """Ask for a plan on the current cuts, unless the mission has left the ground."""
+        if self._replanner is None or self.state.mission_status != "planned":
+            return
+        self._revision += 1
+        clock = self.clock.state()
+        lead_s = 0.0 if clock.paused else PLAN_LEAD_WALL_S * clock.factor
+        self._replanner.request(
+            self._revision,
+            list(self.state.cuts.values()),
+            clock.sim_time_s + lead_s,
+            self._plan_done,
+        )
+
+    def _plan_done(self, revision: int, plan: MissionPlan | None) -> None:
+        if revision != self._revision or self.state.mission_status != "planned":
+            return  # a newer plan is on its way, or the drone already flies
+        if plan is None:
+            pilot = self.scenario.mission.pilot_callsign
+            self._publish([Notification(to=pilot, text="No route to the target within battery.")])
+            return
+        self.plan = PlanUpdated(
+            revision=revision,
+            status=plan.status,
+            metrics=plan.metrics,
+            baseline_route=plan.baseline_route,
+            optimised_route=plan.optimised_route,
+        )
+        self._publish([self.plan])
+
+    def _publish(self, events: list[Event]) -> None:
         for event in events:
             for subscriber in self._subscribers:
                 subscriber(event)
-        return events
 
     def _apply(self, command: Command) -> list[Event]:
         match command:

@@ -9,6 +9,7 @@ import uvicorn
 
 from corridor.adapters.ws.app import create_app
 from corridor.domain.scenario import load_scenario
+from corridor.engine.replan import ProcessReplanner
 
 
 def main() -> None:
@@ -21,5 +22,6 @@ def main() -> None:
     )
     parser.add_argument("--cell-m", type=float, default=100.0, help="planning grid cell size")
     args = parser.parse_args()
-    app = create_app(load_scenario(args.scenario), args.clock_factor, args.cell_m)
+    scenario = load_scenario(args.scenario)
+    app = create_app(scenario, args.clock_factor, args.cell_m, ProcessReplanner)
     uvicorn.run(app, host=args.host, port=args.port)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import AsyncIterator, Callable
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
@@ -15,6 +16,9 @@ from corridor.domain.scenario import Scenario
 from corridor.domain.zones import Zone, mission_zones, planning_grid
 from corridor.engine.clock import SimClock
 from corridor.engine.engine import CommandRejected, Engine
+from corridor.engine.replan import Replanner
+
+ReplannerFactory = Callable[[Scenario, Grid], Replanner]
 
 
 def snapshot(engine: Engine, grid: Grid, zones: list[Zone]) -> Snapshot:
@@ -25,6 +29,7 @@ def snapshot(engine: Engine, grid: Grid, zones: list[Zone]) -> Snapshot:
         clock=engine.clock.state(),
         cuts=list(engine.state.cuts.values()),
         mission_status=engine.state.mission_status,
+        plan=engine.plan,
     )
 
 
@@ -47,13 +52,28 @@ async def _pump(websocket: WebSocket, outbox: Outbox) -> None:
         await websocket.send_text(await outbox.get())
 
 
-def create_app(scenario: Scenario, clock_factor: float, cell_m: float) -> FastAPI:
+def create_app(
+    scenario: Scenario,
+    clock_factor: float,
+    cell_m: float,
+    replanner: ReplannerFactory | None = None,
+) -> FastAPI:
+    """Without ``replanner``, nothing is planned. The first plan is requested at startup."""
     grid = planning_grid(scenario, cell_m)
     zones = mission_zones(scenario)
-    engine = Engine(scenario, SimClock(clock_factor))
+    planner = replanner(scenario, grid) if replanner else None
+    engine = Engine(scenario, SimClock(clock_factor), planner)
     hub = Hub(engine.clock.now)
     engine.subscribe(hub.publish)
-    app = FastAPI(title="Corridor")
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        engine.request_plan()
+        yield
+        if planner:
+            planner.close()
+
+    app = FastAPI(title="Corridor", lifespan=lifespan)
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:

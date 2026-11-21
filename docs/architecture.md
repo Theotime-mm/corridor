@@ -38,9 +38,14 @@ backend/src/corridor/
     state.py      Cut, ClockState, WorldState (runtime state)
     commands.py   domain commands (discriminated union on "type")
     events.py     domain events (discriminated union on "type")
+    planner/
+      masks.py    zones rasterised on the grid, one numpy mask per interval between cut boundaries
+      astar.py    SIPP (safe interval path planning): A* over (cell, safe interval)
+      plan.py     plan_route() (one set of cuts), plan_mission() (baseline, optimised, metrics)
   engine/
     clock.py      SimClock: accelerated clock with an injectable wall-clock source
-    engine.py     Engine: applies commands, publishes events to subscribers
+    engine.py     Engine: applies commands, publishes events to subscribers, requests plans
+    replan.py     ProcessReplanner: plans in a spawned worker process, results back on the loop
   adapters/
     ws/
       schemas.py  wire envelopes, Snapshot, Ack, Error
@@ -57,11 +62,7 @@ Still to write, by whoever owns the piece:
 
 | Module | Content |
 |---|---|
-| `domain/planner/masks.py` | zones rasterised on the grid as numpy masks |
-| `domain/planner/astar.py` | A* over (cell, step): 8 neighbours, hover, ground wait |
-| `domain/planner/plan.py` | `plan_mission()` returning optimised route, baseline route, savings |
 | `domain/safety.py` | checkpoints, fallback to the safe route, timed restart |
-| `engine/replan.py` | process pool executor and plan revisions |
 
 Dependency rule: `domain` imports nothing from `engine` or `adapters`; `engine` imports nothing
 from `adapters`. It can be enforced later with `import-linter` if needed.
@@ -180,9 +181,17 @@ Rules enforced today:
   interleave and the state needs no lock. Subscribers are called synchronously and must not
   block (the hub only enqueues).
 - A rejected command raises `CommandRejected` and leaves the state unchanged.
+- Plans: at startup and after every `cut.schedule`, `cut.confirm` or `cut.cancel`, while the
+  mission is `planned`, the engine requests a plan with the next revision. The earliest takeoff
+  is the current simulated time plus 3 wall-clock seconds at the clock factor (none while
+  paused), so the route does not start in the past when it arrives. It can later: nothing
+  replans as the clock passes the planned takeoff while the mission is still `planned`. A result whose revision is not the latest, or
+  that arrives after launch, is dropped; otherwise it goes out as `plan.updated` and is kept for
+  the snapshot. No route at all gives a notification to the pilot.
+- Without a replanner (`create_app(..., replanner=None)`, used by tests), nothing is planned.
 - To come: the engine owns the simulated drones (advance along the route at clock speed, check
-  checkpoints, apply the safety rules) and triggers replans. Events produced off a command (drone
-  late, jammer restarted, plan ready) go through the same subscribers.
+  checkpoints, apply the safety rules) and the in-flight replans (`fallback`). Events produced
+  off a command (drone late, jammer restarted) go through the same subscribers.
 
 ## Planner
 
@@ -195,15 +204,33 @@ say which cuts are taken into account. One function covers every case:
 | Optimised route | launch point, departure time | confirmed cuts (`approved`), or scheduled ones too (`preview`) |
 | Fallback (drone late, new enemy threat) | current cell and time | no cut (`fallback`) |
 
-**Search.**
-- Grid of 100 m cells over 10 x 10 km, one altitude layer. The time step comes from cell size and
-  cruise speed.
-- Moves: 8 neighbours, hover in place for one step, and ground wait before take-off. Ground
-  wait costs nothing, otherwise the planner would hover in the air instead of delaying departure.
-- Cost: energy, proportional to flight time, hovering included. This holds for multirotors, not
-  for fixed-wing aircraft that have to loiter.
-- Heuristic: straight-line distance divided by speed. It stays admissible because cost is
-  proportional to time.
+**Search: SIPP (safe interval path planning)** (`domain/planner/astar.py`).
+- Grid of 100 m cells, one altitude layer, 8 neighbours at cruise speed (a diagonal takes
+  sqrt(2) times as long as a straight move).
+- A safe interval of a cell is a maximal stretch of time during which it is free. A search state
+  is (cell, safe interval) and its cost is the earliest arrival in it. From a state the drone may
+  leave at any time before the interval closes, hovering until then: waiting for a cut is part of
+  the search and needs no time step. With no cut, every free cell has one interval and SIPP is
+  plain A* on the grid.
+- A move is accepted only if both cells, and for a diagonal the two corner cells, stay free for
+  the whole move.
+- Heuristic: octile distance at cruise speed, a lower bound on the time left, so the first
+  arrival at the goal is the earliest.
+- Cost: flight time, hover included, ground wait excluded (energy is proportional to it for a
+  multirotor, not for a fixed-wing aircraft that has to loiter).
+
+**Takeoff time** (`domain/planner/plan.py`). Minimising flight time with a free ground wait is
+not the same as arriving earliest, so takeoff is a variable of the plan: one SIPP search per
+candidate takeoff: first the earliest departure (flight time F0), then every 30 s from
+"first window opens - F0" (an earlier takeoff cannot beat F0) to the last takeoff that can still
+reach a cut zone before its window closes, then every 5 s around the best one. A better takeoff
+narrower than 30 s can be missed. Each search stops once its lower bound passes the best flight
+time found so far. A `plan_mission` takes about 0.3 to 1.7 s on the demo. A hover over the launch cell is turned into ground wait. Routes that exceed
+`battery_max_s` of flight are rejected.
+
+**Statuses** (`plan_mission`). Baseline: no cut. Then the best route on confirmed cuts
+(`approved` if it saves more than 1 s), then on every cut (`preview` if it saves more than the
+approved or baseline one). Otherwise `baseline`. `fallback` comes with the in-flight replan.
 
 **J/S zones** (`domain/zones.py`). In free space, with EIRP taken toward the drone and the jammer
 on the link band, the J/S ratio at the drone is
@@ -231,7 +258,10 @@ lies on the forbidden side of:
 
 - a friendly jammer zone, unless the jammer is cut at that moment;
 - an enemy jammer zone, at all times;
-- a radar disc (hard ban, or a cost penalty if we want the planner to graze it).
+- a radar disc (hard ban).
+
+The test runs on the cell centre with the boundary pushed out by half the cell diagonal, so a
+cell is forbidden as soon as any part of it may touch a zone.
 
 **Demo calibration, for the jury.** `backend/scenarios/demo.json` uses a 0 dB threshold, a control link
 of 10 W EIRP toward the operating area (for example 1 W behind a 10 dBi ground antenna, assuming
@@ -244,15 +274,26 @@ round figure. With realistic powers (50 W jammer, 1 W link) k < 1 and no detour 
 demo deliberately shows the case where a detour is possible, to compare it with waiting for a
 cut.
 
+Measured on the demo (departure 600 s, 1800 s of battery): the baseline takes the south
+corridor, 681 s of flight (38 %). A J3 cut from 900 s to 1260 s leaves a 270 s window after the
+margins, shorter than the 308 s of a straight crossing: the route crosses J3 off-axis and saves
+about 10 %. A cut of 600 s (900 s to 1500 s) gives a straight crossing and saves about 20 %.
+The cut length is a demo tuning choice.
+
+When no route exists without a cut (the k < 1 case), `plan_mission` returns None for now: the
+metrics are defined against a baseline. To decide if the demo needs that case.
+
 **Safety margins live in the masks.** "Enter at least 30 s after the cut starts, leave at least
 60 s before the restart" means each cut window shrinks to [start + 30 s, end - 60 s] before the
 search runs. The route is safe by construction, not checked afterwards.
 
-**Off the event loop, with revisions.** A pure Python A* blocks for up to a few seconds, so it
-runs in a `ProcessPoolExecutor` (a thread would hold the GIL, Python's global interpreter lock).
-Each request carries a revision number; a result that comes back after a newer revision was
-requested is dropped. The result re-enters the engine on the event loop thread, then goes out as
-`plan.updated`.
+**Off the event loop, with revisions.** A plan takes up to about 2 s of pure Python, so it
+runs in a `ProcessPoolExecutor` with one worker (a thread would hold the GIL, Python's global
+interpreter lock). The worker is spawned, not forked: a forked worker inherits uvicorn's signal
+handlers, ignores SIGTERM and outlives the server. A new request cancels a pending one that has
+not started. Each request carries a revision number; a result that comes back after a newer
+revision was requested is dropped. The result re-enters the engine on the event loop thread,
+then goes out as `plan.updated`.
 
 ## Time
 
@@ -312,13 +353,13 @@ Server to client:
 
 | Type | Status | Content |
 |---|---|---|
-| `snapshot` | done | on connect: scenario, derived grid, zones, clock, cuts, mission status |
+| `snapshot` | done | on connect: scenario, derived grid, zones, clock, cuts, mission status, latest plan (or null) |
 | `clock` | done | sim time, factor, paused; on change only |
 | `cut.scheduled`, `cut.confirmed`, `cut.cancelled` | done | the cut, or its id |
 | `mission.status` | done | status |
 | `notification` | done | `to` (callsign), text, optional action (the button to show and the cut it confirms) |
 | `ack`, `error` | done | `req_id`, reason on error |
-| `plan.updated` | shape fixed, not emitted | see below |
+| `plan.updated` | done | see below; after every cut change while the mission is `planned`; arrives after the command's `ack` |
 | `drone.state` | to come | position, battery, about 2 Hz |
 | `jammer.restarted` | to come | jammer id, with a notification to its operator |
 
@@ -351,8 +392,8 @@ active unless one of its cuts covers the instant shown.
 
 ## Dependencies
 
-Runtime: `fastapi`, `uvicorn`, `websockets` (uvicorn needs it to serve `/ws`), `pydantic`. Dev: `httpx` for the WebSocket test client. `numpy`
-comes with `masks.py`.
+Runtime: `fastapi`, `uvicorn`, `websockets` (uvicorn needs it to serve `/ws`), `pydantic`,
+`numpy` (planner masks). Dev: `httpx` for the WebSocket test client.
 
 ## Open decisions
 
@@ -360,7 +401,14 @@ The defaults below do not change the layout; they live in the planner or in `saf
 
 | Question | Default |
 |---|---|
-| Drone speed | per drone, time step derived from cell size and speed |
+| Drone speed | per mission (`cruise_speed_mps`) |
 | Cell size | 100 m, with masks precomputed per interval; 200 m if replans are too slow |
 | Operator confirmation | required before take-off; in-flight confirmation would be a replan from the current position |
 | "Signed CoT" in the pitch | not true today (plain TCP 8088); TLS on 8089 or drop the claim |
+| Longest ground wait before takeoff | unbounded: a cut an hour ahead gives a plan that waits an hour on the ground |
+| No route without a cut (k < 1) | `plan_mission` returns None (metrics need a baseline) |
+| Preview better than a flyable approved route | `preview` wins the single `optimised_route` slot, the pilot loses the flyable route until confirmation (never happens with one cut) |
+| Plan shown while a replan runs | the previous plan stays (in the snapshot too) until the new one arrives, about 1 to 2 s; after a `cut.cancel` it may cross the cancelled cut; if the worker fails it stays, only logged |
+| Launch on a `preview` plan | accepted today; to gate in `safety.py` |
+| Replan lead time | 3 wall-clock seconds (`PLAN_LEAD_WALL_S`); two queued plans can exceed it |
+| Planner choices made in step 3 | SIPP and a 30 s / 5 s takeoff sweep, cuts must save more than 1 s, cells forbidden if any part may touch a zone, radar is a hard ban, margins 30 s / 60 s as constants in `plan.py` |
