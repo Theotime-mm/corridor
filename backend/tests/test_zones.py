@@ -9,11 +9,13 @@ from corridor.domain.zones import (
     GRID_MARGIN_M,
     RING_VERTICES,
     Beam,
+    ThreatShape,
     Zone,
     angle_off_axis,
     azimuth_to_angle,
     js_disc,
     mission_constraints,
+    mission_shapes,
     nominal_zones,
 )
 
@@ -234,3 +236,91 @@ def test_nominal_zone_of_a_directional_jammer_follows_its_beam(scenario: Scenari
     ring = [frame.to_xy(p) for p in zone.ring]
     main = max(y for _, y in ring)
     assert min(y for _, y in ring) == pytest.approx(-main / 10, rel=1e-3)  # -20 dB: radius / 10
+
+
+# --- position error of enemy threats -------------------------------------------------------
+
+
+def with_errors(scenario: Scenario, **errors: float) -> Scenario:
+    """``scenario`` with ``position_error_m`` set on the enemy threats named."""
+    data = scenario.model_dump(mode="json")
+    for threat in data["enemy_threats"]:
+        if threat["id"] in errors:
+            threat["position_error_m"] = errors[threat["id"]]
+    return Scenario.model_validate(data)
+
+
+def shape_of(scenario: Scenario, threat: str) -> ThreatShape:
+    return next(s for s in mission_shapes(scenario, scenario.missions[0]) if s.threat == threat)
+
+
+def around(point: tuple[float, float], radius_m: float, n: int = 16) -> list[tuple[float, float]]:
+    """``point`` and ``n`` points ``radius_m`` from it."""
+    return [point] + [
+        (
+            point[0] + radius_m * math.cos(2 * math.pi * i / n),
+            point[1] + radius_m * math.sin(2 * math.pi * i / n),
+        )
+        for i in range(n)
+    ]
+
+
+def test_position_error_defaults_to_zero(scenario: Scenario) -> None:
+    assert all(t.position_error_m == 0 for t in scenario.enemy_threats)
+
+
+def test_negative_position_error_is_rejected(scenario: Scenario) -> None:
+    with pytest.raises(ValidationError):
+        with_errors(scenario, R1=-1)
+
+
+def test_radar_disc_grows_by_the_position_error(scenario: Scenario) -> None:
+    exact, wide = shape_of(scenario, "R1").disc, shape_of(with_errors(scenario, R1=300), "R1").disc
+    assert wide.radius_m == pytest.approx(exact.radius_m + 300)
+    assert (wide.x, wide.y) == pytest.approx((exact.x, exact.y))
+
+
+@pytest.mark.parametrize(("link_w", "jammer_w"), [(10, 2), (10, 1), (1, 50)])
+def test_js_disc_holds_for_every_possible_jammer_position(link_w: float, jammer_w: float) -> None:
+    pilot, jammer, error = (0.0, 0.0), (4000.0, 0.0), 300.0
+    wide = js_disc(pilot, jammer, link_w, jammer_w, 0, error)
+    for possible in around(jammer, error):
+        d = js_disc(pilot, possible, link_w, jammer_w, 0)
+        gap = math.dist((wide.x, wide.y), (d.x, d.y))
+        if wide.forbidden == "inside":
+            assert gap + d.radius_m <= wide.radius_m + 1e-6  # every possible zone is covered
+        else:
+            assert gap + wide.radius_m <= d.radius_m + 1e-6  # free from every possible zone
+
+
+def test_js_disc_margin_is_exact_away_from_the_pilot() -> None:
+    wide = js_disc((0.0, 0.0), (4000.0, 0.0), 10, 2, 0, position_error_m=300)
+    farther = js_disc((0.0, 0.0), (4300.0, 0.0), 10, 2, 0)
+    assert wide.x + wide.radius_m == pytest.approx(farther.x + farther.radius_m)
+
+
+def test_too_uncertain_strong_jammer_is_rejected() -> None:
+    with pytest.raises(ValueError, match="too uncertain"):
+        js_disc((0.0, 0.0), (4000.0, 0.0), 1, 50, 0, position_error_m=4000)
+
+
+def test_enemy_jammer_zone_includes_the_position_error(scenario: Scenario) -> None:
+    uncertain = with_errors(scenario, E1=200)
+    exact, wide = shape_of(scenario, "E1"), shape_of(uncertain, "E1")
+    assert wide.kind == "enemy_jammer"
+    assert wide.disc.radius_m > exact.disc.radius_m + 200
+    assert shape_of(uncertain, "J3") == shape_of(scenario, "J3")  # friendly zones unchanged
+
+
+def test_nominal_footprints_grow_by_the_position_error(scenario: Scenario) -> None:
+    def radii(s: Scenario) -> dict[str, float]:
+        positions = {t.id: t.pos for t in s.enemy_threats}
+        return {
+            z.threat: max(math.hypot(*LocalFrame(positions[z.threat]).to_xy(p)) for p in z.ring)
+            for z in nominal_zones(s)
+            if z.threat in positions
+        }
+
+    exact, wide = radii(scenario), radii(with_errors(scenario, R1=300, E1=200))
+    assert wide["R1"] == pytest.approx(exact["R1"] + 300, abs=1)
+    assert wide["E1"] == pytest.approx(exact["E1"] + 200, abs=1)

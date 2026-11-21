@@ -23,6 +23,14 @@ The pilot stands at the launch point, so the zones are fixed for a mission, and 
 mission to the next. Whether a friendly jammer zone is active at a given time depends on its
 cuts, not on this module.
 
+Enemy positions are estimates, within ``position_error_m`` (e). The zone of an enemy threat
+covers its zone for every position that close, so the route stays clear wherever the threat
+really is. A radar disc grows by e. A J/S disc moves by k^2 / |k^2 - 1| times the jammer
+displacement and its radius changes by at most k / |k^2 - 1| times it, so every possible zone
+lies within the estimated disc grown by e * k / |k - 1|; a bubble (k < 1) shrinks by as much.
+For a disc, this is exact on the side away from the pilot and a little generous on the pilot
+side.
+
 A threat concerns a mission when its zone touches the mission planning grid. The grid covers
 launch and target, then grows to cover the concerned threats too, until nothing changes
 (``mission_constraints``).
@@ -49,8 +57,8 @@ RING_VERTICES = 64
 """Vertices of a full circle; a directional zone uses as many across its main beam."""
 GRID_MARGIN_M = 3000.0
 """Room around the mission and the threats that concern it, so detours fit inside the grid.
-Must exceed the largest radar radius, or the grid edge closes detours the jury could rightly
-ask about."""
+Must exceed the largest radar radius plus its position error, or the grid edge closes detours
+the jury could rightly ask about."""
 MAX_ZONE_RADIUS_M = 100_000.0
 """Beyond this, k is so close to 1 that the boundary is nearly a straight line."""
 
@@ -113,8 +121,14 @@ def js_disc(
     link_eirp_w: float,
     jammer_eirp_w: float,
     threshold_db: float,
+    position_error_m: float = 0.0,
 ) -> Disc:
-    """Boundary of J/S >= threshold, as a circle of Apollonius."""
+    """Boundary of J/S >= threshold, as a circle of Apollonius.
+
+    With ``position_error_m``, the jammer may be anywhere that close to ``jammer``: the disc
+    covers every possible zone (forbidden inside), or only the area free from all of them
+    (forbidden outside).
+    """
     (px, py), (jx, jy) = pilot, jammer
     distance = math.hypot(jx - px, jy - py)
     if distance < 1.0:
@@ -122,10 +136,19 @@ def js_disc(
     k2 = 10 ** (threshold_db / 10) * link_eirp_w / jammer_eirp_w
     if k2 == 1.0 or math.sqrt(k2) * distance / abs(k2 - 1) > MAX_ZONE_RADIUS_M:
         raise ValueError("J/S boundary is nearly a straight line: adjust the powers")
+    k = math.sqrt(k2)
+    radius = k * distance / abs(k2 - 1)
+    margin = position_error_m * k / abs(k - 1)
+    if k2 > 1:
+        radius += margin
+    else:
+        radius -= margin
+        if radius <= 0:
+            raise ValueError("jammer position too uncertain: the link may be lost everywhere")
     return Disc(
         x=(k2 * jx - px) / (k2 - 1),
         y=(k2 * jy - py) / (k2 - 1),
-        radius_m=math.sqrt(k2) * distance / abs(k2 - 1),
+        radius_m=radius,
         forbidden="inside" if k2 > 1 else "outside",
     )
 
@@ -169,13 +192,19 @@ def mission_shapes(scenario: Scenario, mission: Mission) -> list[ThreatShape]:
     """Zones of the jammers on the mission band and of every radar, in the mission frame.
 
     Includes threats far from the mission; ``mission_constraints`` keeps those that touch its
-    grid. A zone outside the grid forbids no cell, so the planner may use them all.
+    grid. A zone outside the grid forbids no cell, so the planner may use them all. Enemy zones
+    include the position error.
     """
     frame = LocalFrame(mission.launch)
 
-    def disc(pos: Position, eirp_w: float) -> Disc:
+    def disc(pos: Position, eirp_w: float, position_error_m: float = 0.0) -> Disc:
         return js_disc(
-            (0.0, 0.0), frame.to_xy(pos), mission.link_eirp_w, eirp_w, scenario.js_threshold_db
+            (0.0, 0.0),
+            frame.to_xy(pos),
+            mission.link_eirp_w,
+            eirp_w,
+            scenario.js_threshold_db,
+            position_error_m,
         )
 
     zones: list[ThreatShape] = []
@@ -191,9 +220,8 @@ def mission_shapes(scenario: Scenario, mission: Mission) -> list[ThreatShape]:
     for threat in scenario.enemy_threats:
         match threat:
             case EnemyJammer() if mission.band in threat.bands:
-                zones.append(
-                    ThreatShape(threat.id, "enemy_jammer", disc(threat.pos, threat.eirp_w))
-                )
+                main = disc(threat.pos, threat.eirp_w, threat.position_error_m)
+                zones.append(ThreatShape(threat.id, "enemy_jammer", main))
             case EnemyRadar():
                 zones.append(_radar(threat, frame))
     return zones
@@ -232,12 +260,16 @@ def constraints_by_mission(scenario: Scenario, cell_m: float) -> dict[str, Missi
 
 
 def nominal_zones(scenario: Scenario) -> list[Zone]:
-    """Footprint of every threat against ``scenario.reference_link``, for the command view."""
+    """Footprint of every threat against ``scenario.reference_link``, for the command view.
+
+    The footprint is centred on the jammer, so a position error widens it by as much.
+    """
     link = scenario.reference_link
     t = 10 ** (scenario.js_threshold_db / 10)
 
-    def disc(eirp_w: float) -> Disc:
-        return Disc(0.0, 0.0, link.range_m * math.sqrt(eirp_w / (t * link.eirp_w)), "inside")
+    def disc(eirp_w: float, position_error_m: float = 0.0) -> Disc:
+        radius = link.range_m * math.sqrt(eirp_w / (t * link.eirp_w))
+        return Disc(0.0, 0.0, radius + position_error_m, "inside")
 
     zones: list[Zone] = []
     for j in scenario.friendly_jammers:
@@ -252,9 +284,10 @@ def nominal_zones(scenario: Scenario) -> list[Zone]:
         frame = LocalFrame(threat.pos)
         match threat:
             case EnemyJammer():
-                zones.append(
-                    _zone(ThreatShape(threat.id, "enemy_jammer", disc(threat.eirp_w)), frame)
+                shape = ThreatShape(
+                    threat.id, "enemy_jammer", disc(threat.eirp_w, threat.position_error_m)
                 )
+                zones.append(_zone(shape, frame))
             case EnemyRadar():
                 zones.append(_zone(_radar(threat, frame), frame))
     return zones
@@ -262,9 +295,8 @@ def nominal_zones(scenario: Scenario) -> list[Zone]:
 
 def _radar(radar: EnemyRadar, frame: LocalFrame) -> ThreatShape:
     x, y = frame.to_xy(radar.pos)
-    return ThreatShape(
-        radar.id, "radar", Disc(x=x, y=y, radius_m=radar.radius_m, forbidden="inside")
-    )
+    radius = radar.radius_m + radar.position_error_m
+    return ThreatShape(radar.id, "radar", Disc(x=x, y=y, radius_m=radius, forbidden="inside"))
 
 
 def _zone(shape: ThreatShape, frame: LocalFrame) -> Zone:

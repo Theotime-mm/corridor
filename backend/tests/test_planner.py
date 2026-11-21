@@ -356,3 +356,29 @@ def test_directional_jammer_lets_the_route_pass_behind_its_beam(scenario: Scenar
     directional = Scenario.model_validate(data)
     result = plan(directional, [])
     assert flight_s(result.baseline_route) < 1.05 * direct_s(directional)
+
+
+def test_route_clears_every_possible_position_of_an_uncertain_enemy(scenario: Scenario) -> None:
+    error = 400.0  # E1 then closes the south corridor between J3 and E1
+    data = scenario.model_dump(mode="json")
+    data["enemy_threats"][1]["position_error_m"] = error
+    uncertain = Scenario.model_validate(data)
+    result = plan(uncertain, [])
+    assert flight_s(result.baseline_route) > flight_s(plan(scenario, []).baseline_route)
+
+    e1 = scenario.enemy_threats[1]
+    assert e1.id == "E1"
+    around_e1, mission_frame = LocalFrame(e1.pos), LocalFrame(scenario.missions[0].launch)
+    xy = [mission_frame.to_xy(Position(lat=p.lat, lon=p.lon)) for p in result.baseline_route]
+    samples = [
+        (a[0] + (b[0] - a[0]) * i / 20, a[1] + (b[1] - a[1]) * i / 20)
+        for a, b in itertools.pairwise(xy)
+        for i in range(21)
+    ]
+    for k in range(8):
+        angle = 2 * math.pi * k / 8
+        moved = around_e1.to_position(error * math.cos(angle), error * math.sin(angle))
+        data = scenario.model_dump(mode="json")
+        data["enemy_threats"][1]["pos"] = moved.model_dump(mode="json")
+        zone = next(z for z in shapes_of(Scenario.model_validate(data)) if z.threat == "E1")
+        assert not any(zone.contains(x, y) for x, y in samples), angle

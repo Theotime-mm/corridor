@@ -4,9 +4,10 @@ Times are simulated seconds from ``start_time``. Jammers are described by their 
 zone they deny is computed from the J/S ratio against the pilot link (``corridor.domain.zones``).
 A friendly jammer may have a directional ``antenna``; without one it radiates the same power in
 every direction. A jammer only matters to the mission if its ``bands`` contain the mission
-``band``. Radars are discs (``radius_m``) and block every band. Friendly jammers are on except
-during cuts. ``cuts`` in the file are cuts already scheduled at start; they still need the
-operator's confirmation, like any other cut.
+``band``. Radars are discs (``radius_m``) and block every band. Enemy positions are estimates:
+``position_error_m`` widens their zones (``corridor.domain.zones``). Friendly jammers are on
+except during cuts. ``cuts`` in the file are cuts already scheduled at start; they still need
+the operator's confirmation, like any other cut.
 
 Several missions share the same jammers, threats and cuts. Each mission has its own pilot, so
 its own zones (``corridor.domain.zones.mission_constraints``). ``reference_link`` gives every
@@ -82,6 +83,11 @@ class EnemyRadar(Model):
     id: str
     pos: Position
     radius_m: float = Field(gt=0, description="Estimated detection range.")
+    position_error_m: float = Field(
+        default=0,
+        ge=0,
+        description="Uncertainty on `pos`, metres: the zone covers every position this close.",
+    )
 
 
 class EnemyJammer(Model):
@@ -90,6 +96,11 @@ class EnemyJammer(Model):
     pos: Position
     eirp_w: float = Field(gt=0, description="Estimated EIRP, watts.")
     bands: list[str] = Field(min_length=1)
+    position_error_m: float = Field(
+        default=0,
+        ge=0,
+        description="Uncertainty on `pos`, metres: the zone covers every position this close.",
+    )
 
 
 EnemyThreat = Annotated[EnemyRadar | EnemyJammer, Field(discriminator="type")]

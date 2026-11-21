@@ -186,6 +186,10 @@ export type Id2 = string;
  * Estimated detection range.
  */
 export type RadiusM = number;
+/**
+ * Uncertainty on `pos`, metres: the zone covers every position this close.
+ */
+export type PositionErrorM = number;
 export type Type17 = "jammer";
 export type Id3 = string;
 /**
@@ -196,6 +200,10 @@ export type EirpW2 = number;
  * @minItems 1
  */
 export type Bands1 = [string, ...string[]];
+/**
+ * Uncertainty on `pos`, metres: the zone covers every position this close.
+ */
+export type PositionErrorM1 = number;
 export type EnemyThreats = (EnemyRadar | EnemyJammer)[];
 /**
  * @minItems 1
@@ -621,6 +629,7 @@ export interface EnemyRadar {
   id: Id2;
   pos: Position;
   radius_m: RadiusM;
+  position_error_m: PositionErrorM;
 }
 /**
  * This interface was referenced by `CorridorWs`'s JSON-Schema
@@ -632,6 +641,7 @@ export interface EnemyJammer {
   pos: Position;
   eirp_w: EirpW2;
   bands: Bands1;
+  position_error_m: PositionErrorM1;
 }
 /**
  * This interface was referenced by `CorridorWs`'s JSON-Schema
