@@ -18,7 +18,7 @@ from corridor.domain.planner.plan import (
     plan_mission,
 )
 from corridor.domain.scenario import Scenario
-from corridor.domain.state import Cut, CutStatus
+from corridor.domain.state import Cut, CutStatus, merge_cuts
 from corridor.domain.zones import (
     Beam,
     Disc,
@@ -231,8 +231,10 @@ def test_no_path_after_the_masks_end() -> None:
 def assert_route_is_clear(scenario: Scenario, cuts: list[Cut], route: list[RoutePoint]) -> None:
     """Timing at cruise speed, and clearance of the exact zones at every instant.
 
-    A friendly zone counts as off only inside its cut shrunk by the safety margins.
+    A friendly zone counts as off only inside its cut shrunk by the safety margins; cuts of a
+    jammer that touch count as one, as for the planner and the safety rule.
     """
+    cuts = merge_cuts(cuts)
     mission = scenario.missions[0]
     grid = grid_of(scenario)
     frame = LocalFrame(mission.launch)
@@ -474,10 +476,33 @@ def test_no_choice_through_a_jammer_off_the_route(two_missions: Scenario) -> Non
     assert [[p.jammer for p in c.cuts] for c in result.choices] == [["J3"], []]
 
 
-def test_no_choice_through_a_jammer_that_already_has_a_cut(scenario: Scenario) -> None:
-    for status in ("scheduled", "confirmed"):
-        result = plan(scenario, [cut("J3", 900, 1260, status=status)])
-        assert [c.kind for c in result.choices] == ["safe"]
+def test_no_choice_through_a_jammer_whose_cut_awaits_an_answer(scenario: Scenario) -> None:
+    result = plan(scenario, [cut("J3", 900, 1260, status="scheduled")])
+    assert [c.kind for c in result.choices] == ["safe"]  # one request at a time
+
+
+def test_a_confirmed_cut_covering_the_need_asks_nothing_more(scenario: Scenario) -> None:
+    result = plan(scenario, [cut("J3", 900, 1500)])
+    assert result.status == "approved"
+    assert [c.kind for c in result.choices] == ["safe"]  # the approved route, nothing to ask
+
+
+def test_a_direct_route_may_extend_a_confirmed_cut(scenario: Scenario) -> None:
+    """Another mission got J3 cut too early for this one: ask only for what is missing, right
+    after the confirmed cut, which the route keeps using."""
+    early = cut("J3", 600, 800)
+    result = plan(scenario, [early])
+    one_cut = choice_of(result, "one_cut")
+    (extra,) = one_cut.cuts
+    assert extra.jammer == "J3"
+    assert extra.start_s >= early.end_s  # no overlap: the engine accepts it as a new cut
+    both = [early, cut("J3", extra.start_s, extra.end_s)]
+    assert_route_is_clear(scenario, both, one_cut.route)
+
+
+def test_cuts_that_touch_merge_into_one() -> None:
+    merged = merge_cuts([cut("J3", 600, 800), cut("J3", 800, 1000), cut("J3", 1200, 1300)])
+    assert [(c.start_s, c.end_s) for c in merged] == [(600, 1000), (1200, 1300)]
 
 
 def radar_on_the_way(scenario: Scenario, cross: bool) -> Scenario:

@@ -24,7 +24,7 @@ import numpy.typing as npt
 from corridor.domain.events import RouteAction, RoutePoint
 from corridor.domain.geo import Grid, LocalFrame, Position
 from corridor.domain.planner.plan import ENTRY_MARGIN_S, EXIT_MARGIN_S
-from corridor.domain.state import Cut
+from corridor.domain.state import Cut, merge_cuts
 from corridor.domain.zones import ThreatShape
 
 CHECK_STEP_S = 2.0
@@ -150,8 +150,7 @@ def schedule_violation(
     """
     windows = [
         (c.jammer, c.start_s + ENTRY_MARGIN_S - TOLERANCE_S, c.end_s - EXIT_MARGIN_S + TOLERANCE_S)
-        for c in cuts
-        if c.status == "confirmed"
+        for c in merge_cuts(c for c in cuts if c.status == "confirmed")
     ]
     friendly = [
         z for z in zones if z.kind == "friendly_jammer" and z.threat not in flight.through_jammers
@@ -176,11 +175,10 @@ def schedule_violation(
 
 
 def cut_transitions(cuts: Sequence[Cut], after: float, until: float) -> list[tuple[Cut, str]]:
-    """Confirmed cuts that start or end in (after, until], in time order."""
+    """Confirmed cuts that start or end in (after, until], in time order. Cuts of a jammer
+    that touch count as one: the jammer is not restarted between them."""
     found: list[tuple[float, Cut, str]] = []
-    for cut in cuts:
-        if cut.status != "confirmed":
-            continue
+    for cut in merge_cuts(c for c in cuts if c.status == "confirmed"):
         if after < cut.start_s <= until:
             found.append((cut.start_s, cut, "start"))
         if after < cut.end_s <= until:

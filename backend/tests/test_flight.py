@@ -259,3 +259,20 @@ def test_safety_rule_leaves_a_jammer_the_pilot_flies_through_on_purpose(scenario
     # ...unless the pilot chose to fly straight through anyway.
     on_purpose = Flight(route=route, revision=1, through_jammers=frozenset({"J3"}))
     assert schedule_violation(on_purpose, 0, frame, shapes, []) is None
+
+
+def test_two_cuts_end_to_end_leave_no_gap_for_the_safety_rule(scenario: Scenario) -> None:
+    """A cut extended by a second one, starting when the first ends: the margins apply to the
+    whole, so a drone crossing at the junction is not flagged."""
+    mission = scenario.missions[0]
+    grid = mission_constraints(scenario, mission, 100).grid
+    whole = Cut(id="w", jammer="J3", start_s=900, end_s=1260, status="confirmed", requested_by="t")
+    planned = plan_mission(scenario, mission, grid, [whole])
+    assert planned is not None
+    route = planned.optimised_route
+    split = [
+        whole.model_copy(update={"id": "a", "end_s": 1000}),
+        whole.model_copy(update={"id": "b", "start_s": 1000}),
+    ]
+    frame, shapes = LocalFrame(mission.launch), mission_shapes(scenario, mission)
+    assert schedule_violation(Flight(route=route, revision=1), 0, frame, shapes, split) is None

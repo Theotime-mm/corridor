@@ -26,7 +26,7 @@ from corridor.domain.planner.layers import Cells, Layers, forbidden_cells, missi
 from corridor.domain.planner.masks import shape_mask
 from corridor.domain.planner.smooth import smooth_route
 from corridor.domain.scenario import Mission, Scenario
-from corridor.domain.state import Cut
+from corridor.domain.state import Cut, merge_cuts
 from corridor.domain.zones import ThreatShape, forbidden_shapes, mission_shapes
 
 ENTRY_MARGIN_S = 30.0
@@ -166,7 +166,9 @@ def route_choices(
     start, goal = grid.cell_of(mission.launch), grid.cell_of(mission.target)
     if start is None or goal is None:
         return choices
-    busy = {c.jammer for c in cuts if c.end_s > mission.departure_s}
+    # A jammer whose cut still awaits the command's answer is left alone: one request at a
+    # time. A confirmed cut does not block: a route may ask to extend it.
+    busy = {c.jammer for c in cuts if c.status != "confirmed" and c.end_s > mission.departure_s}
     free = [
         z.threat
         for z in mission_shapes(scenario, mission)
@@ -223,7 +225,7 @@ def _with_cuts(
         return None
     departure = mission.departure_s
     end = departure + mission.battery_max_s
-    held = [w for w in (_usable(c) for c in confirmed) if w is not None]
+    held = _usable_cuts(confirmed)
     off = [_hypothetical(j, departure, end) for j in jammers]
     layers = mission_layers(scenario, mission, grid, [*held, *off], departure, end)
     path = _path(grid, mission, layers, start, goal, departure, end)
@@ -231,7 +233,7 @@ def _with_cuts(
         return None
     steps, takeoff = path
     cells = _jammer_cells(scenario, mission, grid, jammers)
-    windows: list[Cut] = []
+    needed: list[Cut] = []
     for jammer in jammers:
         jammed = cells.get(jammer)
         if jammed is None:
@@ -242,18 +244,18 @@ def _with_cuts(
         first = presence[0]
         if jammed[0, start[1], start[0]]:  # taking off inside the zone: off from take-off
             first = min(first, takeoff)
-        windows.append(
-            _hypothetical(
-                jammer,
-                max(0.0, math.floor(first - ENTRY_MARGIN_S)),
-                math.ceil(presence[1] + EXIT_MARGIN_S),
-            )
+        need = _hypothetical(
+            jammer,
+            max(0.0, math.floor(first - ENTRY_MARGIN_S)),
+            math.ceil(presence[1] + EXIT_MARGIN_S),
         )
-    usable = [w for w in (_usable(c) for c in windows) if w is not None]
-    if not usable or len(usable) < len(windows):
-        return None
-    horizon = max([departure, *(w.end_s for w in windows)]) + mission.battery_max_s
-    layers = mission_layers(scenario, mission, grid, [*held, *usable], departure, horizon)
+        # Only what the confirmed cuts of this jammer do not cover yet is asked for.
+        needed += _minus(need, [c for c in confirmed if c.jammer == jammer])
+    if not needed:
+        return None  # the confirmed cuts already cover it: nothing to ask
+    horizon = max([departure, *(w.end_s for w in needed)]) + mission.battery_max_s
+    usable = _usable_cuts([*confirmed, *needed])
+    layers = mission_layers(scenario, mission, grid, usable, departure, horizon)
     route = _search(grid, mission, layers, start, goal, departure, horizon)
     if route is None or flight_s(route) > mission.battery_max_s:
         return None
@@ -261,7 +263,7 @@ def _with_cuts(
     route = smooth_route(
         route, grid, layers.timed, mission.cruise_speed_mps, altitudes=layers.altitudes
     )
-    proposed = [ProposedCut(jammer=w.jammer, start_s=w.start_s, end_s=w.end_s) for w in windows]
+    proposed = [ProposedCut(jammer=w.jammer, start_s=w.start_s, end_s=w.end_s) for w in needed]
     return route, proposed
 
 
@@ -343,7 +345,7 @@ def plan_route(
     start, goal = grid.cell_of(mission.launch), grid.cell_of(mission.target)
     if start is None or goal is None:
         return None
-    windows = [w for w in (_usable(c) for c in cuts) if w is not None]
+    windows = _usable_cuts(cuts)
     zones = forbidden_shapes(scenario, mission)
     latest = max([mission.departure_s, *(w.end_s for w in windows)])
     layers = mission_layers(
@@ -432,6 +434,29 @@ def flight_s(route: list[RoutePoint]) -> float:
 
 def _takeoff(route: list[RoutePoint]) -> float:
     return next(p.t for p in route if p.action != "ground")
+
+
+def _usable_cuts(cuts: Iterable[Cut]) -> list[Cut]:
+    """The usable part of each cut, cuts of a jammer that touch merged first (one margin each
+    side of the merged cut, none in between)."""
+    return [w for w in (_usable(c) for c in merge_cuts(cuts)) if w is not None]
+
+
+def _minus(need: Cut, covered: Sequence[Cut]) -> list[Cut]:
+    """Parts of ``need`` that no cut of ``covered`` (same jammer) overlaps, in time order."""
+    pieces = [need]
+    for cut in sorted(covered, key=lambda c: c.start_s):
+        rest: list[Cut] = []
+        for piece in pieces:
+            if cut.end_s <= piece.start_s or piece.end_s <= cut.start_s:
+                rest.append(piece)
+                continue
+            if piece.start_s < cut.start_s:
+                rest.append(piece.model_copy(update={"end_s": cut.start_s}))
+            if cut.end_s < piece.end_s:
+                rest.append(piece.model_copy(update={"start_s": cut.end_s}))
+        pieces = rest
+    return pieces
 
 
 def _usable(cut: Cut) -> Cut | None:
