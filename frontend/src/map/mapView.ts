@@ -5,7 +5,7 @@ import type { GeoJSONSource, Map as MlMap, StyleSpecification } from 'maplibre-g
 import type { Feature, FeatureCollection } from 'geojson'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
-import type { Grid, Position, RoutePoint, Scenario, Zone } from '../api/protocol'
+import type { Grid, PlanUpdated, Position, RoutePoint, Scenario, Zone } from '../api/protocol'
 import { gridBounds, type ZoneState } from '../domain/view'
 
 // Draft basemap: online OSM raster tiles. TODO: offline PMTiles extract of the demo area.
@@ -39,8 +39,23 @@ export const COLORS = {
   radar: '#fd7e14',
   baseline: '#adb5bd',
   optimised: '#22b8cf',
+  preview: '#f08c00',
+  fallback: '#fa5252',
   drone: '#ffffff',
 }
+
+/** Colour of the planned route for each plan status. */
+export const ROUTE_COLORS: Record<PlanUpdated['status'], string> = {
+  baseline: COLORS.optimised,
+  approved: COLORS.optimised,
+  preview: COLORS.preview,
+  fallback: COLORS.fallback,
+}
+
+/** Drone updates arrive about every 500 ms: glide to each one over slightly less. */
+const DRONE_GLIDE_MS = 450
+/** Beyond this jump (new route, reconnect), place the drone instead of gliding. */
+const DRONE_SNAP_M = 2000
 
 type FC = FeatureCollection
 const empty = (): FC => ({ type: 'FeatureCollection', features: [] })
@@ -48,8 +63,10 @@ const empty = (): FC => ({ type: 'FeatureCollection', features: [] })
 export interface MapView {
   setScene(scenario: Scenario, grid: Grid, zones: Zone[]): void
   setZoneStates(states: Record<string, ZoneState>): void
-  setRoutes(baseline: RoutePoint[] | null, optimised: RoutePoint[] | null): void
-  setDrone(pos: Position | null): void
+  /** The detour is hidden when it is the planned route itself (status baseline or fallback). */
+  setRoutes(plan: PlanUpdated | null): void
+  /** `glide`: animate from the shown position (live updates); otherwise jump (scrubbing). */
+  setDrone(pos: Position | null, glide?: boolean): void
   destroy(): void
 }
 
@@ -68,6 +85,8 @@ export function createMapView(container: HTMLElement): MapView {
   let states: Record<string, ZoneState> = {}
   const markers: maplibregl.Marker[] = []
   let droneMarker: maplibregl.Marker | null = null
+  let droneShown: Position | null = null
+  let droneFrame = 0
 
   const setData = (source: string, data: FC) => {
     pending[source] = data
@@ -94,7 +113,7 @@ export function createMapView(container: HTMLElement): MapView {
     })
     map.addLayer({
       id: 'route-optimised', type: 'line', source: 'routes', filter: ['==', ['get', 'kind'], 'optimised'],
-      paint: { 'line-color': COLORS.optimised, 'line-width': 4 },
+      paint: { 'line-color': ['get', 'color'], 'line-width': 4 },
     })
     loaded = true
   })
@@ -139,28 +158,52 @@ export function createMapView(container: HTMLElement): MapView {
       states = s
       renderZones()
     },
-    setRoutes(baseline, optimised) {
-      const line = (kind: string, r: RoutePoint[] | null): Feature[] =>
-        r && r.length > 1
-          ? [{ type: 'Feature', properties: { kind }, geometry: { type: 'LineString', coordinates: r.map((p) => [p.lon, p.lat]) } }]
+    setRoutes(plan) {
+      const line = (kind: string, r: RoutePoint[], color: string): Feature[] =>
+        r.length > 1
+          ? [{ type: 'Feature', properties: { kind, color }, geometry: { type: 'LineString', coordinates: r.map((p) => [p.lon, p.lat]) } }]
           : []
-      setData('routes', { type: 'FeatureCollection', features: [...line('baseline', baseline), ...line('optimised', optimised)] })
+      const features = plan
+        ? [
+            ...(plan.status === 'preview' || plan.status === 'approved' ? line('baseline', plan.baseline_route, COLORS.baseline) : []),
+            ...line('optimised', plan.optimised_route, ROUTE_COLORS[plan.status]),
+          ]
+        : []
+      setData('routes', { type: 'FeatureCollection', features })
     },
-    setDrone(pos) {
+    setDrone(pos, glide = false) {
+      cancelAnimationFrame(droneFrame)
       if (!pos) {
         droneMarker?.remove()
         droneMarker = null
+        droneShown = null
         return
       }
       if (!droneMarker) {
         const el = document.createElement('div')
         el.className = 'drone-marker'
         droneMarker = new maplibregl.Marker({ element: el }).setLngLat([pos.lon, pos.lat]).addTo(map)
-      } else {
-        droneMarker.setLngLat([pos.lon, pos.lat])
+        droneShown = pos
+        return
       }
+      const from = droneShown
+      if (!glide || !from || distanceM(from, pos) > DRONE_SNAP_M) {
+        droneMarker.setLngLat([pos.lon, pos.lat])
+        droneShown = pos
+        return
+      }
+      const marker = droneMarker
+      const started = performance.now()
+      const step = (now: number) => {
+        const f = Math.min(1, (now - started) / DRONE_GLIDE_MS)
+        droneShown = { lat: from.lat + f * (pos.lat - from.lat), lon: from.lon + f * (pos.lon - from.lon) }
+        marker.setLngLat([droneShown.lon, droneShown.lat])
+        if (f < 1) droneFrame = requestAnimationFrame(step)
+      }
+      droneFrame = requestAnimationFrame(step)
     },
     destroy() {
+      cancelAnimationFrame(droneFrame)
       map.remove()
     },
   }
@@ -185,4 +228,10 @@ function label(map: MlMap, pos: Position, text: string, color: string): maplibre
   span.textContent = text
   el.append(dot, span)
   return new maplibregl.Marker({ element: el, anchor: 'left', offset: [-6, 0] }).setLngLat([pos.lon, pos.lat]).addTo(map)
+}
+
+function distanceM(a: Position, b: Position): number {
+  const dLat = (b.lat - a.lat) * 111_320
+  const dLon = (b.lon - a.lon) * 111_320 * Math.cos((a.lat * Math.PI) / 180)
+  return Math.hypot(dLat, dLon)
 }

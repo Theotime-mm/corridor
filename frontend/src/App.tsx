@@ -1,5 +1,6 @@
 import { Alert, ScrollArea, Stack } from '@mantine/core'
 import { CutsCard } from './components/CutsCard'
+import { DemoCard } from './components/DemoCard'
 import { FeedCard } from './components/FeedCard'
 import { MapPanel } from './components/MapPanel'
 import { MissionCard } from './components/MissionCard'
@@ -25,6 +26,7 @@ export default function App() {
               </Alert>
             )}
             {!hasSnapshot && <Alert color="yellow">Waiting for corridor-server on /ws…</Alert>}
+            <DemoCard />
             <MissionCard />
             <CutsCard />
             <FeedCard />
