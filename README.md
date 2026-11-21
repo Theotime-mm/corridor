@@ -30,8 +30,13 @@ web front end ◄──────────────────► backe
   what ATAK sends.
 - OTS is only the relay to ATAK. The web front end never talks to OTS directly.
 
-Status: setup only (OTS stack, CoT client, demo shapes). Backend, planner and front end are not
-started in this repo.
+Core architecture, module layout and WebSocket protocol: [docs/architecture.md](docs/architecture.md).
+
+Status:
+- Core skeleton: scenario loading, J/S jammer zones, cut scheduling and confirmation, mission,
+  accelerated clock, WebSocket server and its JSON Schema. Planner (masks, 4D A*) not started.
+- TAK side: OTS stack, CoT client and demo shapes (sections below). Not wired to the core yet.
+- Front end: not started.
 
 ## Front end
 
@@ -68,6 +73,15 @@ Rules:
   one port, no Node on the demo laptop.
 - Demo controls: scenario picker, start / pause / speed, reset, a keyboard shortcut per demo
   step.
+
+## Corridor server
+
+```bash
+uv sync
+uv run corridor-server                        # ws://127.0.0.1:8000/ws, scenarios/demo.json
+uv run corridor-server --clock-factor 30 --scenario scenarios/other.json
+uv run corridor-schema > schema/ws.schema.json   # after changing a message model
+```
 
 ## Requirements
 

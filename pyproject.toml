@@ -1,16 +1,23 @@
 [project]
 name = "corridor"
 version = "0.1.0"
-description = "Friendly EW / drone corridor deconfliction, published to TAK clients through OpenTAKServer."
+description = "Time-aware drone route planner that uses the friendly EW jammer schedule."
 readme = "README.md"
 authors = [
     { name = "Yoann CORGNET" }
 ]
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "fastapi>=0.165.0",
+    "pydantic>=2.14.4",
+    "uvicorn>=0.54.0",
+    "websockets>=17.4",
+]
 
 [project.scripts]
 corridor-tak = "corridor.tak.cli:main"
+corridor-server = "corridor.adapters.ws.server:main"
+corridor-schema = "corridor.adapters.ws.schema:main"
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]
@@ -31,9 +38,11 @@ python_version = "3.12"
 strict = true
 mypy_path = "src"
 packages = ["corridor"]
+plugins = ["pydantic.mypy"]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "mypy>=2.4.1",
     "pytest>=9.2.0",
     "ruff>=0.17.6",

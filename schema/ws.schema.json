@@ -1,0 +1,1131 @@
+{
+  "title": "CorridorWs",
+  "description": "client: messages the front end sends; server: messages it receives.",
+  "type": "object",
+  "properties": {
+    "client": {
+      "$ref": "#/$defs/ClientMessage"
+    },
+    "server": {
+      "$ref": "#/$defs/ServerMessage"
+    }
+  },
+  "required": [
+    "client",
+    "server"
+  ],
+  "$defs": {
+    "Ack": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "ack",
+          "default": "ack",
+          "title": "Type",
+          "type": "string"
+        },
+        "req_id": {
+          "title": "Req Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "req_id"
+      ],
+      "title": "Ack",
+      "type": "object"
+    },
+    "CancelCut": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "cut.cancel",
+          "default": "cut.cancel",
+          "title": "Type",
+          "type": "string"
+        },
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "cut": {
+          "title": "Cut",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "actor",
+        "cut"
+      ],
+      "title": "CancelCut",
+      "type": "object"
+    },
+    "ClientMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "req_id": {
+          "title": "Req Id",
+          "type": "string"
+        },
+        "command": {
+          "discriminator": {
+            "mapping": {
+              "clock.set": "#/$defs/SetClock",
+              "cut.cancel": "#/$defs/CancelCut",
+              "cut.confirm": "#/$defs/ConfirmCut",
+              "cut.schedule": "#/$defs/ScheduleCut",
+              "mission.launch": "#/$defs/LaunchMission"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ScheduleCut"
+            },
+            {
+              "$ref": "#/$defs/CancelCut"
+            },
+            {
+              "$ref": "#/$defs/ConfirmCut"
+            },
+            {
+              "$ref": "#/$defs/LaunchMission"
+            },
+            {
+              "$ref": "#/$defs/SetClock"
+            }
+          ],
+          "title": "Command"
+        }
+      },
+      "required": [
+        "req_id",
+        "command"
+      ],
+      "title": "ClientMessage",
+      "type": "object"
+    },
+    "ClockChanged": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "clock",
+          "default": "clock",
+          "title": "Type",
+          "type": "string"
+        },
+        "clock": {
+          "$ref": "#/$defs/ClockState"
+        }
+      },
+      "required": [
+        "type",
+        "clock"
+      ],
+      "title": "ClockChanged",
+      "type": "object"
+    },
+    "ClockState": {
+      "additionalProperties": false,
+      "properties": {
+        "sim_time_s": {
+          "title": "Sim Time S",
+          "type": "number"
+        },
+        "factor": {
+          "description": "Simulated seconds per wall-clock second.",
+          "title": "Factor",
+          "type": "number"
+        },
+        "paused": {
+          "title": "Paused",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sim_time_s",
+        "factor",
+        "paused"
+      ],
+      "title": "ClockState",
+      "type": "object"
+    },
+    "ConfirmCut": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "cut.confirm",
+          "default": "cut.confirm",
+          "title": "Type",
+          "type": "string"
+        },
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "cut": {
+          "title": "Cut",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "actor",
+        "cut"
+      ],
+      "title": "ConfirmCut",
+      "type": "object"
+    },
+    "Cut": {
+      "additionalProperties": false,
+      "description": "A window during which a friendly jammer is off.\n\nOnly a confirmed cut may be used by the planner for the approved route.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "jammer": {
+          "title": "Jammer",
+          "type": "string"
+        },
+        "start_s": {
+          "title": "Start S",
+          "type": "number"
+        },
+        "end_s": {
+          "title": "End S",
+          "type": "number"
+        },
+        "status": {
+          "enum": [
+            "scheduled",
+            "confirmed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "requested_by": {
+          "title": "Requested By",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "jammer",
+        "start_s",
+        "end_s",
+        "status",
+        "requested_by"
+      ],
+      "title": "Cut",
+      "type": "object"
+    },
+    "CutCancelled": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "cut.cancelled",
+          "default": "cut.cancelled",
+          "title": "Type",
+          "type": "string"
+        },
+        "cut": {
+          "title": "Cut",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "cut"
+      ],
+      "title": "CutCancelled",
+      "type": "object"
+    },
+    "CutConfirmed": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "cut.confirmed",
+          "default": "cut.confirmed",
+          "title": "Type",
+          "type": "string"
+        },
+        "cut": {
+          "$ref": "#/$defs/Cut"
+        }
+      },
+      "required": [
+        "type",
+        "cut"
+      ],
+      "title": "CutConfirmed",
+      "type": "object"
+    },
+    "CutScheduled": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "cut.scheduled",
+          "default": "cut.scheduled",
+          "title": "Type",
+          "type": "string"
+        },
+        "cut": {
+          "$ref": "#/$defs/Cut"
+        }
+      },
+      "required": [
+        "type",
+        "cut"
+      ],
+      "title": "CutScheduled",
+      "type": "object"
+    },
+    "EnemyJammer": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "jammer",
+          "default": "jammer",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "pos": {
+          "$ref": "#/$defs/Position"
+        },
+        "eirp_w": {
+          "description": "Estimated EIRP, watts.",
+          "exclusiveMinimum": 0,
+          "title": "Eirp W",
+          "type": "number"
+        },
+        "bands": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Bands",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "pos",
+        "eirp_w",
+        "bands"
+      ],
+      "title": "EnemyJammer",
+      "type": "object"
+    },
+    "EnemyRadar": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "radar",
+          "default": "radar",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "pos": {
+          "$ref": "#/$defs/Position"
+        },
+        "radius_m": {
+          "description": "Estimated detection range.",
+          "exclusiveMinimum": 0,
+          "title": "Radius M",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "pos",
+        "radius_m"
+      ],
+      "title": "EnemyRadar",
+      "type": "object"
+    },
+    "Error": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "error",
+          "default": "error",
+          "title": "Type",
+          "type": "string"
+        },
+        "req_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "None when the message could not be parsed.",
+          "title": "Req Id"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "req_id",
+        "reason"
+      ],
+      "title": "Error",
+      "type": "object"
+    },
+    "FriendlyJammer": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "operator_callsign": {
+          "title": "Operator Callsign",
+          "type": "string"
+        },
+        "pos": {
+          "$ref": "#/$defs/Position"
+        },
+        "eirp_w": {
+          "description": "Effective isotropic radiated power, watts.",
+          "exclusiveMinimum": 0,
+          "title": "Eirp W",
+          "type": "number"
+        },
+        "bands": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Bands",
+          "type": "array"
+        },
+        "cuts": {
+          "items": {
+            "$ref": "#/$defs/PlannedCut"
+          },
+          "title": "Cuts",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "operator_callsign",
+        "pos",
+        "eirp_w",
+        "bands",
+        "cuts"
+      ],
+      "title": "FriendlyJammer",
+      "type": "object"
+    },
+    "Grid": {
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "$ref": "#/$defs/Position",
+          "description": "South-west corner of the grid."
+        },
+        "cell_m": {
+          "exclusiveMinimum": 0,
+          "title": "Cell M",
+          "type": "number"
+        },
+        "cols": {
+          "exclusiveMinimum": 0,
+          "title": "Cols",
+          "type": "integer"
+        },
+        "rows": {
+          "exclusiveMinimum": 0,
+          "title": "Rows",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "origin",
+        "cell_m",
+        "cols",
+        "rows"
+      ],
+      "title": "Grid",
+      "type": "object"
+    },
+    "LaunchMission": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "mission.launch",
+          "default": "mission.launch",
+          "title": "Type",
+          "type": "string"
+        },
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "actor"
+      ],
+      "title": "LaunchMission",
+      "type": "object"
+    },
+    "Mission": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "drone_id": {
+          "title": "Drone Id",
+          "type": "string"
+        },
+        "pilot_callsign": {
+          "description": "The pilot stands at the launch point.",
+          "title": "Pilot Callsign",
+          "type": "string"
+        },
+        "launch": {
+          "$ref": "#/$defs/Position"
+        },
+        "target": {
+          "$ref": "#/$defs/Position"
+        },
+        "band": {
+          "title": "Band",
+          "type": "string"
+        },
+        "link_eirp_w": {
+          "description": "EIRP of the pilot's control link, watts.",
+          "exclusiveMinimum": 0,
+          "title": "Link Eirp W",
+          "type": "number"
+        },
+        "cruise_speed_mps": {
+          "exclusiveMinimum": 0,
+          "title": "Cruise Speed Mps",
+          "type": "number"
+        },
+        "battery_max_s": {
+          "description": "Flight time on a full battery.",
+          "exclusiveMinimum": 0,
+          "title": "Battery Max S",
+          "type": "number"
+        },
+        "departure_s": {
+          "description": "Earliest departure.",
+          "minimum": 0,
+          "title": "Departure S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "drone_id",
+        "pilot_callsign",
+        "launch",
+        "target",
+        "band",
+        "link_eirp_w",
+        "cruise_speed_mps",
+        "battery_max_s",
+        "departure_s"
+      ],
+      "title": "Mission",
+      "type": "object"
+    },
+    "MissionStatusChanged": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "mission.status",
+          "default": "mission.status",
+          "title": "Type",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "planned",
+            "flying"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "status"
+      ],
+      "title": "MissionStatusChanged",
+      "type": "object"
+    },
+    "Notification": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "notification",
+          "default": "notification",
+          "title": "Type",
+          "type": "string"
+        },
+        "to": {
+          "description": "Callsign of the pilot or of a jammer operator.",
+          "title": "To",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NotificationAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "to",
+        "text",
+        "action"
+      ],
+      "title": "Notification",
+      "type": "object"
+    },
+    "NotificationAction": {
+      "additionalProperties": false,
+      "description": "Command the recipient is expected to send back, shown as a button.",
+      "properties": {
+        "command": {
+          "const": "cut.confirm",
+          "title": "Command",
+          "type": "string"
+        },
+        "cut": {
+          "title": "Cut",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "cut"
+      ],
+      "title": "NotificationAction",
+      "type": "object"
+    },
+    "PlanMetrics": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_battery_used_pct": {
+          "description": "Of battery_max_s.",
+          "title": "Baseline Battery Used Pct",
+          "type": "number"
+        },
+        "optimised_battery_used_pct": {
+          "description": "Of battery_max_s.",
+          "title": "Optimised Battery Used Pct",
+          "type": "number"
+        },
+        "saved_pct": {
+          "description": "Relative to the baseline consumption.",
+          "title": "Saved Pct",
+          "type": "number"
+        },
+        "saved_s": {
+          "description": "Flight time saved, hover included, ground wait excluded.",
+          "title": "Saved S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "baseline_battery_used_pct",
+        "optimised_battery_used_pct",
+        "saved_pct",
+        "saved_s"
+      ],
+      "title": "PlanMetrics",
+      "type": "object"
+    },
+    "PlanUpdated": {
+      "additionalProperties": false,
+      "description": "Planner output. Not emitted yet: the planner is not wired in.\n\nDefined now so the front end can code against its shape.",
+      "properties": {
+        "type": {
+          "const": "plan.updated",
+          "default": "plan.updated",
+          "title": "Type",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "preview",
+            "approved",
+            "fallback",
+            "baseline"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "metrics": {
+          "$ref": "#/$defs/PlanMetrics"
+        },
+        "baseline_route": {
+          "description": "As if every jammer stayed on.",
+          "items": {
+            "$ref": "#/$defs/RoutePoint"
+          },
+          "title": "Baseline Route",
+          "type": "array"
+        },
+        "optimised_route": {
+          "items": {
+            "$ref": "#/$defs/RoutePoint"
+          },
+          "title": "Optimised Route",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "revision",
+        "status",
+        "metrics",
+        "baseline_route",
+        "optimised_route"
+      ],
+      "title": "PlanUpdated",
+      "type": "object"
+    },
+    "PlannedCut": {
+      "additionalProperties": false,
+      "properties": {
+        "start_s": {
+          "minimum": 0,
+          "title": "Start S",
+          "type": "number"
+        },
+        "end_s": {
+          "title": "End S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "start_s",
+        "end_s"
+      ],
+      "title": "PlannedCut",
+      "type": "object"
+    },
+    "Position": {
+      "additionalProperties": false,
+      "properties": {
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "title": "Lat",
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "title": "Lon",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lat",
+        "lon"
+      ],
+      "title": "Position",
+      "type": "object"
+    },
+    "RoutePoint": {
+      "additionalProperties": false,
+      "description": "Position at time ``t``; ``action`` holds until the next point.",
+      "properties": {
+        "lat": {
+          "title": "Lat",
+          "type": "number"
+        },
+        "lon": {
+          "title": "Lon",
+          "type": "number"
+        },
+        "t": {
+          "title": "T",
+          "type": "number"
+        },
+        "action": {
+          "enum": [
+            "fly",
+            "hover",
+            "ground"
+          ],
+          "title": "Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "lat",
+        "lon",
+        "t",
+        "action"
+      ],
+      "title": "RoutePoint",
+      "type": "object"
+    },
+    "Scenario": {
+      "additionalProperties": false,
+      "properties": {
+        "start_time": {
+          "description": "Wall-clock time of simulated t = 0.",
+          "format": "date-time",
+          "title": "Start Time",
+          "type": "string"
+        },
+        "js_threshold_db": {
+          "description": "The control link is lost where J/S at the drone reaches this value.",
+          "title": "Js Threshold Db",
+          "type": "number"
+        },
+        "friendly_jammers": {
+          "items": {
+            "$ref": "#/$defs/FriendlyJammer"
+          },
+          "title": "Friendly Jammers",
+          "type": "array"
+        },
+        "enemy_threats": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "jammer": "#/$defs/EnemyJammer",
+                "radar": "#/$defs/EnemyRadar"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/EnemyRadar"
+              },
+              {
+                "$ref": "#/$defs/EnemyJammer"
+              }
+            ]
+          },
+          "title": "Enemy Threats",
+          "type": "array"
+        },
+        "mission": {
+          "$ref": "#/$defs/Mission"
+        }
+      },
+      "required": [
+        "start_time",
+        "js_threshold_db",
+        "friendly_jammers",
+        "enemy_threats",
+        "mission"
+      ],
+      "title": "Scenario",
+      "type": "object"
+    },
+    "ScheduleCut": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "cut.schedule",
+          "default": "cut.schedule",
+          "title": "Type",
+          "type": "string"
+        },
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "jammer": {
+          "title": "Jammer",
+          "type": "string"
+        },
+        "start_s": {
+          "minimum": 0,
+          "title": "Start S",
+          "type": "number"
+        },
+        "end_s": {
+          "title": "End S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "actor",
+        "jammer",
+        "start_s",
+        "end_s"
+      ],
+      "title": "ScheduleCut",
+      "type": "object"
+    },
+    "ServerMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "seq": {
+          "title": "Seq",
+          "type": "integer"
+        },
+        "sim_time_s": {
+          "title": "Sim Time S",
+          "type": "number"
+        },
+        "payload": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "clock": "#/$defs/ClockChanged",
+                  "cut.cancelled": "#/$defs/CutCancelled",
+                  "cut.confirmed": "#/$defs/CutConfirmed",
+                  "cut.scheduled": "#/$defs/CutScheduled",
+                  "mission.status": "#/$defs/MissionStatusChanged",
+                  "notification": "#/$defs/Notification",
+                  "plan.updated": "#/$defs/PlanUpdated"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CutScheduled"
+                },
+                {
+                  "$ref": "#/$defs/CutCancelled"
+                },
+                {
+                  "$ref": "#/$defs/CutConfirmed"
+                },
+                {
+                  "$ref": "#/$defs/ClockChanged"
+                },
+                {
+                  "$ref": "#/$defs/MissionStatusChanged"
+                },
+                {
+                  "$ref": "#/$defs/Notification"
+                },
+                {
+                  "$ref": "#/$defs/PlanUpdated"
+                }
+              ]
+            },
+            {
+              "discriminator": {
+                "mapping": {
+                  "ack": "#/$defs/Ack",
+                  "error": "#/$defs/Error",
+                  "snapshot": "#/$defs/Snapshot"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/Snapshot"
+                },
+                {
+                  "$ref": "#/$defs/Ack"
+                },
+                {
+                  "$ref": "#/$defs/Error"
+                }
+              ]
+            }
+          ],
+          "title": "Payload"
+        }
+      },
+      "required": [
+        "seq",
+        "sim_time_s",
+        "payload"
+      ],
+      "title": "ServerMessage",
+      "type": "object"
+    },
+    "SetClock": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "clock.set",
+          "default": "clock.set",
+          "title": "Type",
+          "type": "string"
+        },
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "factor": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Factor"
+        },
+        "paused": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paused"
+        }
+      },
+      "required": [
+        "type",
+        "actor"
+      ],
+      "title": "SetClock",
+      "type": "object"
+    },
+    "Snapshot": {
+      "additionalProperties": false,
+      "description": "Full state, sent on connect. Enough to render any instant on the client.",
+      "properties": {
+        "type": {
+          "const": "snapshot",
+          "default": "snapshot",
+          "title": "Type",
+          "type": "string"
+        },
+        "scenario": {
+          "$ref": "#/$defs/Scenario"
+        },
+        "grid": {
+          "$ref": "#/$defs/Grid",
+          "description": "Planning grid, derived from the scenario positions."
+        },
+        "zones": {
+          "description": "Zones that matter to the mission, see domain.zones.",
+          "items": {
+            "$ref": "#/$defs/Zone"
+          },
+          "title": "Zones",
+          "type": "array"
+        },
+        "clock": {
+          "$ref": "#/$defs/ClockState"
+        },
+        "cuts": {
+          "items": {
+            "$ref": "#/$defs/Cut"
+          },
+          "title": "Cuts",
+          "type": "array"
+        },
+        "mission_status": {
+          "enum": [
+            "planned",
+            "flying"
+          ],
+          "title": "Mission Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "scenario",
+        "grid",
+        "zones",
+        "clock",
+        "cuts",
+        "mission_status"
+      ],
+      "title": "Snapshot",
+      "type": "object"
+    },
+    "Zone": {
+      "additionalProperties": false,
+      "properties": {
+        "threat": {
+          "description": "Id of the jammer or radar.",
+          "title": "Threat",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "friendly_jammer",
+            "enemy_jammer",
+            "radar"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "forbidden": {
+          "description": "Side of the ring the mission may not enter.",
+          "enum": [
+            "inside",
+            "outside"
+          ],
+          "title": "Forbidden",
+          "type": "string"
+        },
+        "ring": {
+          "description": "Closed boundary; the first vertex is not repeated.",
+          "items": {
+            "$ref": "#/$defs/Position"
+          },
+          "title": "Ring",
+          "type": "array"
+        }
+      },
+      "required": [
+        "threat",
+        "kind",
+        "forbidden",
+        "ring"
+      ],
+      "title": "Zone",
+      "type": "object"
+    }
+  }
+}

@@ -1,0 +1,366 @@
+# Corridor architecture
+
+Corridor is a time-aware route planner for drones flying near friendly EW (electronic warfare)
+jammers. The jammer schedule is part of the input, so the planner can wait for a scheduled cut
+and fly straight through instead of taking a long detour.
+
+```
+web front end ◄──WebSocket──► Corridor core ◄──CoT (read + write)──► OTS ◄──► ATAK phones
+```
+
+Scope of this document: the application core and the WebSocket interface for the web front end.
+The TAK side (CoT, Cursor on Target, through OpenTAKServer to ATAK, the Android Team Awareness
+Kit) comes later as one more adapter; the OTS stack in `infra/ots` is ready when needed.
+
+## Principles
+
+- **One owner of state.** The engine holds the world state and the clock and applies the
+  safety rules. Nothing else mutates state, so there are no locks.
+- **The planner is pure computation.** No state, no asyncio, no clock. Same inputs, same route.
+- **Adapters talk to the core through commands and events.** The WebSocket adapter today, the
+  TAK adapter later. Adding TAK must not change the core.
+- **Lightweight hexagonal.** A port exists only where there are two implementations today.
+  No repository (there is no database), no port in front of the planner, no DTO (data transfer
+  object) mapping layers, no dependency injection framework.
+- **No placeholder code.** A module is created when the code that fills it is written.
+
+## Layout
+
+What exists today:
+
+```
+src/corridor/
+  domain/
+    model.py      pydantic base class shared by every model that crosses a boundary
+    geo.py        Position, LocalFrame (lat/lon <-> metres), Grid (cell lookup, covering grid)
+    scenario.py   Scenario and its parts, consistency checks, JSON loader
+    zones.py      J/S zones (circles of Apollonius), radar discs, planning grid
+    state.py      Cut, ClockState, WorldState (runtime state)
+    commands.py   domain commands (discriminated union on "type")
+    events.py     domain events (discriminated union on "type")
+  engine/
+    clock.py      SimClock: accelerated clock with an injectable wall-clock source
+    engine.py     Engine: applies commands, publishes events to subscribers
+  adapters/
+    ws/
+      schemas.py  wire envelopes, Snapshot, Ack, Error
+      hub.py      fan-out of server messages to connected clients
+      app.py      FastAPI app, /ws endpoint
+      server.py   corridor-server entry point
+      schema.py   corridor-schema: JSON Schema export
+  tak/            CoT client and encoders, unchanged; moves to adapters/tak with the TAK adapter
+scenarios/demo.json   demo scenario (J3 between pilot and target, radar to the side, enemy jammer)
+schema/ws.schema.json generated protocol schema, consumed by the front end
+```
+
+Still to write, by whoever owns the piece:
+
+| Module | Content |
+|---|---|
+| `domain/planner/masks.py` | zones rasterised on the grid as numpy masks |
+| `domain/planner/astar.py` | A* over (cell, step): 8 neighbours, hover, ground wait |
+| `domain/planner/plan.py` | `plan_mission()` returning optimised route, baseline route, savings |
+| `domain/safety.py` | checkpoints, fallback to the safe route, timed restart |
+| `engine/replan.py` | process pool executor and plan revisions |
+
+Dependency rule: `domain` imports nothing from `engine` or `adapters`; `engine` imports nothing
+from `adapters`. It can be enforced later with `import-linter` if needed.
+
+```
+             commands                         commands
+ web front ──────────────┐            ┌──────────────── TAK (later: GeoChat "ACK")
+ (WebSocket)             ▼            ▼
+                    ┌──────────────────────┐
+                    │  Engine              │──► planner (pure, runs off the event loop)
+                    │  state, clock,       │
+                    │  safety rules        │
+                    └──────────┬───────────┘
+                               │ events
+              ┌────────────────┴────────────────┐
+              ▼                                 ▼
+      WebSocket hub                     CoT adapter (later)
+```
+
+## Domain data
+
+Two kinds of data, kept apart:
+
+| | Scenario | World state |
+|---|---|---|
+| Content | start time, friendly jammers (with optional initial cuts), enemy threats, the mission | cuts (scheduled or confirmed), mission status; later drone position and injected enemy threats |
+| Source | `scenarios/*.json`, written by hand for the demo | built by the engine from the scenario, then changed by commands |
+| Lifetime | static during a run | in memory; restart the server to reset |
+
+- Times are simulated seconds from the scenario `start_time` (for example 14:00:00Z); every
+  time field ends in `_s`.
+- Jammers are described by their EIRP (effective isotropic radiated power); the zone they deny
+  comes from the J/S (jammer to signal) model below. Radars are discs (`radius_m`).
+- Friendly jammers are on except during cuts. `cuts` in the file are cuts already scheduled at
+  start: they begin as `scheduled` and still need the operator's confirmation. Other cuts are
+  created live with `cut.schedule`.
+- Band filter: a jammer (friendly or enemy) only blocks the mission if its `bands` contain the
+  mission `band`. A radar blocks every band.
+- One mission per scenario. It carries the drone, the pilot callsign (the pilot stands at the
+  launch point), speed, battery and earliest departure.
+- The grid is not in the file: the server derives it from launch, target and threat positions,
+  with 3000 m of margin on each side (`--cell-m`, default 100 m), and sends it in the snapshot.
+  Zones may reach past the grid; cells outside it are unreachable.
+- The scenario is checked on load: unique ids, non-overlapping initial cuts, known threat
+  `type`, no unknown field. Zones are computed at server start, which fails on a degenerate
+  case (jammer on the launch point, or a boundary that is nearly a straight line).
+
+Scenario file:
+
+```json
+{
+  "start_time": "2026-11-21T14:00:00Z",
+  "js_threshold_db": 0,
+  "friendly_jammers": [
+    { "id": "J3", "operator_callsign": "EW-J3", "pos": { "lat": 48.145, "lon": 11.567 },
+      "eirp_w": 2, "bands": ["2.4GHz", "5.8GHz"],
+      "cuts": [ { "start_s": 900, "end_s": 1260 } ] }
+  ],
+  "enemy_threats": [
+    { "type": "radar", "id": "R1", "pos": { "lat": 48.174, "lon": 11.574 }, "radius_m": 2000 },
+    { "type": "jammer", "id": "E1", "pos": { "lat": 48.111, "lon": 11.554 }, "eirp_w": 1,
+      "bands": ["2.4GHz"] }
+  ],
+  "mission": {
+    "id": "M1", "drone_id": "UAV-1", "pilot_callsign": "PILOT-1",
+    "launch": { "lat": 48.145, "lon": 11.513 }, "target": { "lat": 48.145, "lon": 11.621 },
+    "band": "2.4GHz", "link_eirp_w": 10, "cruise_speed_mps": 15, "battery_max_s": 1800,
+    "departure_s": 600
+  }
+}
+```
+- The JSON file is the initial data set, not a storage: nothing is written back. If persistence
+  comes, `WorldState` is the one place to plug it.
+
+## Ports
+
+| Port | Direction | Implementations |
+|---|---|---|
+| `Engine.submit(command)` | in | WebSocket adapter; TAK adapter later |
+| `Engine.subscribe(callback)` | out | WebSocket hub; CoT adapter later |
+
+The clock is not a port: `SimClock` takes its wall-clock source as a parameter, and tests pass
+a fake one.
+
+## Commands and events
+
+Commands and events belong to the domain. Each adapter translates its own wire format:
+
+| | Input -> command | Event -> output |
+|---|---|---|
+| WebSocket | JSON `cut.confirm` -> `ConfirmCut` | `CutConfirmed` -> JSON |
+| TAK (later) | GeoChat "ACK" -> `ConfirmCut` | `CutConfirmed` -> GeoChat, recoloured polygon |
+
+- **Shared vocabulary, not 1 to 1.** The front receives everything; TAK will listen to a subset
+  in another shape. Demo controls (`clock.set`) only exist on the front.
+- **Every command carries an `actor`**, the sender's callsign. The engine, not the adapter,
+  checks it: only the jammer operator may confirm a cut, whatever the channel. The web front
+  chooses its callsign (pilot or operator view); there is no authentication in the proof of
+  concept.
+- **Accepted shortcut on the WebSocket side.** Domain events are pydantic models; the WebSocket
+  adapter sends them as they are, inside the envelope. The front is coupled to the domain, which
+  is fine for a proof of concept. TAK needs a real translator anyway.
+
+Rules enforced today:
+
+| Command | Rejected when |
+|---|---|
+| `cut.schedule` | unknown friendly jammer, start in the past, overlap with another cut of the same jammer |
+| `cut.confirm` | unknown cut, already confirmed, actor is not the jammer operator |
+| `cut.cancel` | unknown cut |
+| `mission.launch` | mission not in `planned` |
+
+## Engine
+
+- `submit` is synchronous and runs on the asyncio event loop thread, so commands never
+  interleave and the state needs no lock. Subscribers are called synchronously and must not
+  block (the hub only enqueues).
+- A rejected command raises `CommandRejected` and leaves the state unchanged.
+- To come: the engine owns the simulated drones (advance along the route at clock speed, check
+  checkpoints, apply the safety rules) and triggers replans. Events produced off a command (drone
+  late, jammer restarted, plan ready) go through the same subscribers.
+
+## Planner
+
+**Explicit assumptions.** `plan(mission, start=(cell, t), assumptions)`, where the assumptions
+say which cuts are taken into account. One function covers every case:
+
+| Case | Start | Assumptions |
+|---|---|---|
+| Baseline route | launch point, departure time | no cut, every jammer on |
+| Optimised route | launch point, departure time | confirmed cuts (`approved`), or scheduled ones too (`preview`) |
+| Fallback (drone late, new enemy threat) | current cell and time | no cut (`fallback`) |
+
+**Search.**
+- Grid of 100 m cells over 10 x 10 km, one altitude layer. The time step comes from cell size and
+  cruise speed.
+- Moves: 8 neighbours, hover in place for one step, and ground wait before take-off. Ground
+  wait costs nothing, otherwise the planner would hover in the air instead of delaying departure.
+- Cost: energy, proportional to flight time, hovering included. This holds for multirotors, not
+  for fixed-wing aircraft that have to loiter.
+- Heuristic: straight-line distance divided by speed. It stays admissible because cost is
+  proportional to time.
+
+**J/S zones** (`domain/zones.py`). In free space, with EIRP taken toward the drone and the jammer
+on the link band, the J/S ratio at the drone is
+
+    J/S = (Pj / dj^2) / (Ps / ds^2)
+
+with Pj the jammer EIRP, Ps the pilot link EIRP, dj and ds the distances from the drone to the
+jammer and to the pilot. The link is lost where J/S >= t (t = 10^(threshold_db / 10)), that is
+where ds / dj >= k with k = sqrt(t Ps / Pj). The boundary is a circle of Apollonius:
+
+- k > 1 (link stronger than jammer, after threshold): a disc around the jammer, pushed away
+  from the pilot. Forbidden inside.
+- k < 1 (jammer stronger): the jammer wins everywhere but a bubble around the pilot. Forbidden
+  outside. With realistic powers (50 W jammer, 1 W link, 0 dB) this is the usual case: no
+  detour exists, only waiting for a cut works.
+
+The pilot stands at the launch point, so the zones are fixed for a mission and computed once.
+Jammers whose bands do not contain the mission band have no zone. Zones go to the front (and
+later to TAK) as rings of 64 points with the forbidden side; neither needs to know the model.
+Antenna patterns or terrain would change the shapes, not the contract.
+
+**Forbidden cells.** Cuts are piecewise constant in time, so `masks.py` precomputes one mask per
+interval between cut boundaries with numpy, not one per time step. A cell is forbidden when it
+lies on the forbidden side of:
+
+- a friendly jammer zone, unless the jammer is cut at that moment;
+- an enemy jammer zone, at all times;
+- a radar disc (hard ban, or a cost penalty if we want the planner to graze it).
+
+**Demo calibration, for the jury.** `scenarios/demo.json` uses a 0 dB threshold, a control link
+of 10 W EIRP toward the operating area (for example 1 W behind a 10 dBi ground antenna, assuming
+the drone stays in its main beam), a 2 W friendly jammer and a 1 W enemy jammer. J3 then denies
+a 2.2 km radius disc centred 1 km beyond it. The radar disc overlaps it, so there is no gap
+between them. Two detours remain, and the planner picks the shorter one for the baseline: north
+around the radar, or a corridor about 600 m wide in the south, between J3 and E1. The threshold
+depends on the link waveform (frequency hopping links tolerate more); 0 dB is a conservative
+round figure. With realistic powers (50 W jammer, 1 W link) k < 1 and no detour exists: the
+demo deliberately shows the case where a detour is possible, to compare it with waiting for a
+cut.
+
+**Safety margins live in the masks.** "Enter at least 30 s after the cut starts, leave at least
+60 s before the restart" means each cut window shrinks to [start + 30 s, end - 60 s] before the
+search runs. The route is safe by construction, not checked afterwards.
+
+**Off the event loop, with revisions.** A pure Python A* blocks for up to a few seconds, so it
+runs in a `ProcessPoolExecutor` (a thread would hold the GIL, Python's global interpreter lock).
+Each request carries a revision number; a result that comes back after a newer revision was
+requested is dropped. The result re-enters the engine on the event loop thread, then goes out as
+`plan.updated`.
+
+## Time
+
+- Simulated time is driven by the clock factor (x10 to x30 for the pitch, `--clock-factor`,
+  default 20). The clock starts paused at t = 0; the front starts it with `clock.set`.
+- The front can render any instant on its own (see below), so scrubbing the timeline never
+  touches the server clock.
+- For the later CoT adapter: `start` and `stale` must carry wall-clock time. With an accelerated
+  clock, simulated times would reach ATAK as future or already stale events. Simulated time goes
+  in labels and chat text only.
+
+## WebSocket protocol
+
+Run the server with `uv run corridor-server` (`--scenario`, `--host`, `--port`,
+`--clock-factor`). Endpoint: `ws://127.0.0.1:8000/ws`.
+
+Client to server:
+
+```json
+{ "req_id": "r1", "command": { "type": "cut.schedule", "actor": "EW-1", "jammer": "J3", "start_s": 900, "end_s": 1260 } }
+```
+
+Server to client:
+
+```json
+{ "seq": 1, "sim_time_s": 0.0, "payload": { "type": "cut.scheduled", "cut": { } } }
+```
+
+- `seq` grows by one per broadcast event. `snapshot`, `ack` and `error` carry the current `seq`
+  without incrementing it.
+- A command gets its events (broadcast to every client) first, then its `ack` (sender only).
+  A rejected command gets only an `error` with its `req_id`; an unparsable message gets an
+  `error` with `req_id: null`.
+- A reconnect gets a fresh `snapshot`, so no client-side resync logic is needed.
+
+**`plan.updated`**
+
+```json
+{ "type": "plan.updated", "revision": 3, "status": "approved",
+  "metrics": { "baseline_battery_used_pct": 85, "optimised_battery_used_pct": 52,
+               "saved_pct": 38.8, "saved_s": 594 },
+  "baseline_route":  [ { "lat": 48.145, "lon": 11.513, "t": 600, "action": "fly" } ],
+  "optimised_route": [ { "lat": 48.145, "lon": 11.513, "t": 600, "action": "ground" },
+                       { "lat": 48.145, "lon": 11.513, "t": 840, "action": "fly" } ] }
+```
+
+- A route point is the position at time `t`; `action` (`fly`, `hover`, `ground`) holds until
+  the next point. Only points where the direction or the action changes are sent; the front
+  interpolates.
+- `status`: `preview` (uses a cut not confirmed yet, not flyable), `approved` (confirmed cuts
+  only), `fallback` (drone late, safe route from its position), `baseline` (no usable cut).
+- Battery figures are consumption in % of `battery_max_s`. `saved_pct` is relative to the
+  baseline consumption: (85 - 52) / 85 = 38.8 %, not the 33 point difference. `saved_s` counts
+  flight time, hover included, ground wait excluded.
+
+**Server to client**
+
+| Type | Status | Content |
+|---|---|---|
+| `snapshot` | done | on connect: scenario, derived grid, zones, clock, cuts, mission status |
+| `clock` | done | sim time, factor, paused; on change only |
+| `cut.scheduled`, `cut.confirmed`, `cut.cancelled` | done | the cut, or its id |
+| `mission.status` | done | status |
+| `notification` | done | `to` (callsign), text, optional action (the button to show and the cut it confirms) |
+| `ack`, `error` | done | `req_id`, reason on error |
+| `plan.updated` | shape fixed, not emitted | see below |
+| `drone.state` | to come | position, battery, about 2 Hz |
+| `jammer.restarted` | to come | jammer id, with a notification to its operator |
+
+**Client to server**
+
+| Type | Status | Payload |
+|---|---|---|
+| `cut.schedule` | done | jammer, start, end |
+| `cut.cancel` | done | cut id |
+| `cut.confirm` | done | cut id |
+| `mission.launch` | done | none (one mission per scenario) |
+| `clock.set` | done | factor and/or paused |
+| `inject.enemy_threat`, `inject.delay` | to come | demo twists |
+
+**Contract.** `schema/ws.schema.json` is generated from the pydantic models
+(`uv run corridor-schema > schema/ws.schema.json`) and a test fails when it is out of date. Its
+`client` and `server` properties are the two message types; every `type` field is required, so
+the generated TypeScript unions discriminate on it. For example with `json-schema-to-typescript`
+(not tried yet: check how it renders `Cell`, a two-integer tuple):
+
+```bash
+npx json-schema-to-typescript schema/ws.schema.json > src/corridor-ws.d.ts
+```
+
+**Rendering on the front.** Cuts are known in advance and routes are timed, so from the snapshot
+and the last `plan.updated` the front can draw the state at any instant, past or future. Zones
+come ready to draw in the snapshot: one ring per threat, filled on its `forbidden` side (for
+`outside`, a polygon covering the grid with the ring as a hole). A friendly jammer zone is
+active unless one of its cuts covers the instant shown.
+
+## Dependencies
+
+Runtime: `fastapi`, `uvicorn`, `websockets` (uvicorn needs it to serve `/ws`), `pydantic`. Dev: `httpx` for the WebSocket test client. `numpy`
+comes with `masks.py`.
+
+## Open decisions
+
+The defaults below do not change the layout; they live in the planner or in `safety.py`.
+
+| Question | Default |
+|---|---|
+| Drone speed | per drone, time step derived from cell size and speed |
+| Cell size | 100 m, with masks precomputed per interval; 200 m if replans are too slow |
+| Operator confirmation | required before take-off; in-flight confirmation would be a replan from the current position |
+| "Signed CoT" in the pitch | not true today (plain TCP 8088); TLS on 8089 or drop the claim |
