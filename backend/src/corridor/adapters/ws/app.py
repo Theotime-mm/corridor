@@ -27,6 +27,7 @@ from pydantic import ValidationError
 
 from corridor.adapters.ws.audience import Audience, Viewer
 from corridor.adapters.ws.hub import Hub, Outbox
+from corridor.adapters.ws.outlines import level_outlines
 from corridor.adapters.ws.schemas import Ack, ClientMessage, Error, MissionView, Snapshot
 from corridor.domain.events import (
     Event,
@@ -231,6 +232,15 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.get("/api/zones3d", responses={404: {"description": "Unknown mission."}})
+    def get_zones3d(mission_id: str) -> dict[str, Any]:
+        """3D only: the cells each jammer and radar forbids at each flight level for the
+        mission, as the planner sees them, as GeoJSON outlines; empty in 2D."""
+        runtime = engine.missions.get(mission_id)
+        if runtime is None:
+            raise HTTPException(404, "unknown mission")
+        return level_outlines(engine.scenario, runtime.mission, runtime.constraints.grid)
 
     @app.get("/api/buildings")
     def get_buildings() -> Response:

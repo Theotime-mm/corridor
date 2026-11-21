@@ -297,3 +297,16 @@ def test_buildings_endpoint_is_empty_without_buildings(scenario: Scenario) -> No
     response = client.get("/api/buildings")
     assert response.status_code == 200
     assert response.json() == {"type": "FeatureCollection", "features": []}
+
+
+def test_zones3d_endpoint_gives_outlines_per_level_in_3d(scenario: Scenario) -> None:
+    flat = TestClient(create_app(scenario, clock_factor=20, cell_m=100))
+    assert flat.get("/api/zones3d", params={"mission_id": "M1"}).json()["features"] == []
+    assert flat.get("/api/zones3d", params={"mission_id": "M9"}).status_code == 404
+    terrain = scenario.terrain.model_copy(update={"mode": "3d"})
+    deep = TestClient(create_app(scenario.model_copy(update={"terrain": terrain}), 20, 100))
+    features = deep.get("/api/zones3d", params={"mission_id": "M1"}).json()["features"]
+    assert {f["properties"]["threat"] for f in features} >= {"J3", "E1", "R1"}
+    levels = {f["properties"]["level_m"] for f in features}
+    assert levels == set(scenario.terrain.levels_m)
+    assert all(f["geometry"]["type"] == "Polygon" for f in features)
