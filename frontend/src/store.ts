@@ -28,6 +28,20 @@ export interface RequestDraft {
 
 const NO_DRAFT: RequestDraft = { open: false, editing: null, launch: null, target: null, picking: null }
 
+/** What the sidebar shows under its action bar, when no form is open. */
+export type SidePanel =
+  | { view: 'list' }
+  | { view: 'mission'; id: string }
+  | { view: 'object'; kind: 'jammer' | 'threat'; id: string }
+
+/** EW cut form, over the sidebar panel: fields it starts with. */
+export interface CutDraft {
+  jammer: string | null
+  mission: string | null
+}
+
+const LIST: SidePanel = { view: 'list' }
+
 export interface FeedItem {
   id: number
   atS: number
@@ -55,6 +69,11 @@ interface State {
   /** Instant shown on map and timeline; null = follow the live clock. */
   viewTimeS: number | null
   requestDraft: RequestDraft
+  /** Sidebar panel; a form (mission or cut) shows over it and returns to it on close. */
+  panel: SidePanel
+  listTab: 'missions' | 'objects'
+  /** EW cut form; null = closed. */
+  cutDraft: CutDraft | null
 
   setConn: (conn: ConnStatus) => void
   signIn: (callsign: string) => void
@@ -71,6 +90,14 @@ interface State {
   setRequestDraft: (patch: Partial<RequestDraft>) => void
   /** Map click: sets the point being picked, if any; for a new mission, the target comes next. */
   pickPoint: (pos: Position) => void
+  /** Show a mission in the sidebar; it also becomes the selected mission on the map. */
+  openMission: (id: string) => void
+  openObject: (kind: 'jammer' | 'threat', id: string) => void
+  /** Back to the lists (the selected mission stays selected on the map). */
+  openList: () => void
+  setListTab: (tab: 'missions' | 'objects') => void
+  openCut: (draft: CutDraft) => void
+  closeCut: () => void
 }
 
 let feedId = 0
@@ -85,6 +112,9 @@ const SESSION = {
   lastError: null,
   viewTimeS: null,
   requestDraft: NO_DRAFT,
+  panel: LIST,
+  listTab: 'missions',
+  cutDraft: null,
 } satisfies Partial<State>
 
 export const useStore = create<State>((set, get) => ({
@@ -104,10 +134,16 @@ export const useStore = create<State>((set, get) => ({
   openRequest: (launch) => {
     const draft = get().requestDraft
     const fresh = draft.editing === null ? draft : NO_DRAFT
-    set({ requestDraft: { ...fresh, open: true, picking: 'launch', launch: fresh.launch ?? launch } })
+    set({
+      requestDraft: { ...fresh, open: true, picking: 'launch', launch: fresh.launch ?? launch },
+      cutDraft: null,
+    })
   },
   openEdit: (mission, launch, target) =>
-    set({ requestDraft: { open: true, editing: mission, launch, target, picking: null } }),
+    set({
+      requestDraft: { open: true, editing: mission, launch, target, picking: null },
+      cutDraft: null,
+    }),
   closeRequest: () => set({ requestDraft: NO_DRAFT }),
   setRequestDraft: (patch) => set({ requestDraft: { ...get().requestDraft, ...patch } }),
   pickPoint: (pos) => {
@@ -116,6 +152,12 @@ export const useStore = create<State>((set, get) => ({
     const next = draft.picking === 'launch' && draft.editing === null && !draft.target ? 'target' : null
     set({ requestDraft: { ...draft, [draft.picking]: pos, picking: next } })
   },
+  openMission: (id) => set({ panel: { view: 'mission', id }, selectedMission: id }),
+  openObject: (kind, id) => set({ panel: { view: 'object', kind, id } }),
+  openList: () => set({ panel: LIST }),
+  setListTab: (listTab) => set({ listTab }),
+  openCut: (cutDraft) => set({ cutDraft, requestDraft: NO_DRAFT }),
+  closeCut: () => set({ cutDraft: null }),
 
   apply: (msg) => {
     const p = msg.payload
@@ -149,7 +191,12 @@ export const useStore = create<State>((set, get) => ({
       case 'clock':
         set({ ...clockSync, clock: p.clock })
         return
-      case 'cut.scheduled':
+      case 'cut.scheduled': {
+        // The cut form that asked for it closes.
+        const own = p.cut.requested_by === get().callsign && get().cutDraft !== null
+        set({ ...clockSync, cuts: { ...get().cuts, [p.cut.id]: p.cut }, ...(own && { cutDraft: null }) })
+        return
+      }
       case 'cut.confirmed':
         set({ ...clockSync, cuts: { ...get().cuts, [p.cut.id]: p.cut } })
         return
@@ -163,7 +210,8 @@ export const useStore = create<State>((set, get) => ({
         // A new snapshot follows: it carries the mission and what it brings into view, and
         // keeps the selection. The pilot who asked for it moves on to it.
         const own = p.mission.pilot_callsign === get().callsign
-        set(own ? { ...clockSync, selectedMission: p.mission.id, requestDraft: NO_DRAFT } : clockSync)
+        const opened = { selectedMission: p.mission.id, panel: { view: 'mission', id: p.mission.id } as const }
+        set(own ? { ...clockSync, ...opened, requestDraft: NO_DRAFT } : clockSync)
         return
       }
       case 'mission.updated': {

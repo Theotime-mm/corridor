@@ -74,7 +74,15 @@ html, body, #root { height: 100%; margin: 0; }
   background: color-mix(in srgb, var(--c) 30%, transparent); border-radius: 2px; }
 .map-legend-line { height: 0; border-top: 4px solid var(--c); }
 .map-legend-dash { height: 0; border-top: 3px dashed var(--c); }
-.side { border-left: 1px solid var(--mantine-color-dark-4); height: 100%; }
+.side { border-left: 1px solid var(--mantine-color-dark-4); display: flex; flex-direction: column;
+  min-height: 0; }
+.side-actions { height: 44px; flex: none; border-bottom: 1px solid var(--mantine-color-dark-4); }
+.side-body { flex: 1; min-height: 0; }
+.side-dock { flex: none; border-top: 1px solid var(--mantine-color-dark-4); background: #141517; }
+/* clickable row in the sidebar lists */
+.side-row { display: block; width: 100%; padding: 6px 8px; border-radius: 4px; }
+.side-row:hover { background: var(--mantine-color-dark-6); }
+.side-row[data-active] { background: var(--mantine-color-dark-5); }
 /* timeline shell & header */
 .timeline-shell {
   display: flex;
