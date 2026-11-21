@@ -1,4 +1,4 @@
-"""Zones the mission may not enter, and the planning grid around them.
+"""Zones a mission may not enter, the planning grid around them, and nominal footprints.
 
 Jammer zones come from the J/S ratio at the drone, in free space, with EIRP taken toward the
 drone and the jammer on the link band:
@@ -19,8 +19,18 @@ sidelobe disc outside it. Both discs contain the jammer, so the zone is star-sha
 jammer. Only k > 1 is supported: with k < 1 the zone would be an unbounded wedge, which a ring
 cannot describe.
 
-The pilot stands at the launch point, so the zones are fixed for a mission. Whether a friendly
-jammer zone is active at a given time depends on its cuts, not on this module.
+The pilot stands at the launch point, so the zones are fixed for a mission, and differ from one
+mission to the next. Whether a friendly jammer zone is active at a given time depends on its
+cuts, not on this module.
+
+A threat concerns a mission when its zone touches the mission planning grid. The grid covers
+launch and target, then grows to cover the concerned threats too, until nothing changes
+(``mission_constraints``).
+
+The command view sees no mission: it gets a nominal footprint per threat (``nominal_zones``),
+where a drone flying ``reference_link.range_m`` from its pilot would lose a link of
+``reference_link.eirp_w``. That is J/S >= t at a distance from the jammer below
+``range_m * sqrt(Pj / (t * Ps))``: a disc centred on the jammer.
 """
 
 from __future__ import annotations
@@ -33,13 +43,14 @@ from pydantic import Field
 
 from corridor.domain.geo import Grid, LocalFrame, Position
 from corridor.domain.model import Model
-from corridor.domain.scenario import Antenna, EnemyJammer, EnemyRadar, Scenario
+from corridor.domain.scenario import Antenna, EnemyJammer, EnemyRadar, Mission, Scenario
 
 RING_VERTICES = 64
 """Vertices of a full circle; a directional zone uses as many across its main beam."""
 GRID_MARGIN_M = 3000.0
-"""Room around the mission and the threats, so detours fit inside the grid. Must exceed the
-largest radar radius, or the grid edge closes detours the jury could rightly ask about."""
+"""Room around the mission and the threats that concern it, so detours fit inside the grid.
+Must exceed the largest radar radius, or the grid edge closes detours the jury could rightly
+ask about."""
 MAX_ZONE_RADIUS_M = 100_000.0
 """Beyond this, k is so close to 1 that the boundary is nearly a straight line."""
 
@@ -144,9 +155,22 @@ class ThreatShape:
         return inside == (d.forbidden == "inside")
 
 
-def mission_shapes(scenario: Scenario) -> list[ThreatShape]:
-    """Zones that matter to the mission: jammers on its band, every radar."""
-    mission = scenario.mission
+class MissionConstraints(Model):
+    """What constrains one mission: its grid, its zones, and the threats behind them."""
+
+    mission: str
+    grid: Grid = Field(description="Planning grid of the mission.")
+    zones: list[Zone] = Field(description="Zones of the concerned threats, for this pilot.")
+    jammers: list[str] = Field(description="Friendly jammers that concern the mission.")
+    threats: list[str] = Field(description="Enemy threats that concern the mission.")
+
+
+def mission_shapes(scenario: Scenario, mission: Mission) -> list[ThreatShape]:
+    """Zones of the jammers on the mission band and of every radar, in the mission frame.
+
+    Includes threats far from the mission; ``mission_constraints`` keeps those that touch its
+    grid. A zone outside the grid forbids no cell, so the planner may use them all.
+    """
     frame = LocalFrame(mission.launch)
 
     def disc(pos: Position, eirp_w: float) -> Disc:
@@ -171,34 +195,117 @@ def mission_shapes(scenario: Scenario) -> list[ThreatShape]:
                     ThreatShape(threat.id, "enemy_jammer", disc(threat.pos, threat.eirp_w))
                 )
             case EnemyRadar():
-                x, y = frame.to_xy(threat.pos)
-                radar = Disc(x=x, y=y, radius_m=threat.radius_m, forbidden="inside")
-                zones.append(ThreatShape(threat.id, "radar", radar))
+                zones.append(_radar(threat, frame))
     return zones
 
 
-def mission_zones(scenario: Scenario) -> list[Zone]:
-    """``mission_shapes`` as rings, for the front end."""
-    frame = LocalFrame(scenario.mission.launch)
-    return [
-        Zone(
-            threat=z.threat,
-            kind=z.kind,
-            forbidden=z.disc.forbidden,
-            ring=[frame.to_position(x, y) for x, y in _ring(z)],
-        )
-        for z in mission_shapes(scenario)
-    ]
+def mission_constraints(scenario: Scenario, mission: Mission, cell_m: float) -> MissionConstraints:
+    """Grid of the mission and the threats whose zone touches it.
 
-
-def planning_grid(scenario: Scenario, cell_m: float) -> Grid:
-    """Grid around launch, target and every threat, with ``GRID_MARGIN_M`` on each side.
-
-    Zones may reach past the grid: the planner treats cells outside it as unreachable.
+    The grid starts around launch and target with ``GRID_MARGIN_M`` on each side, then also
+    covers the position of every concerned threat, so the detours around it fit; repeated
+    until the set of concerned threats stops growing. Zones may reach past the grid: the
+    planner treats cells outside it as unreachable.
     """
-    threats = [*scenario.friendly_jammers, *scenario.enemy_threats]
-    points = [scenario.mission.launch, scenario.mission.target, *(t.pos for t in threats)]
-    return Grid.covering(points, GRID_MARGIN_M, cell_m)
+    frame = LocalFrame(mission.launch)
+    shapes = mission_shapes(scenario, mission)
+    positions = {t.id: t.pos for t in [*scenario.friendly_jammers, *scenario.enemy_threats]}
+    concerned: list[ThreatShape] = []
+    while True:
+        points = [mission.launch, mission.target, *(positions[z.threat] for z in concerned)]
+        grid = Grid.covering(points, GRID_MARGIN_M, cell_m)
+        touching = [z for z in shapes if _touches(z, _grid_box(grid, frame))]
+        if len(touching) == len(concerned):
+            break
+        concerned = touching
+    return MissionConstraints(
+        mission=mission.id,
+        grid=grid,
+        zones=[_zone(z, frame) for z in concerned],
+        jammers=[z.threat for z in concerned if z.kind == "friendly_jammer"],
+        threats=[z.threat for z in concerned if z.kind != "friendly_jammer"],
+    )
+
+
+def constraints_by_mission(scenario: Scenario, cell_m: float) -> dict[str, MissionConstraints]:
+    return {m.id: mission_constraints(scenario, m, cell_m) for m in scenario.missions}
+
+
+def nominal_zones(scenario: Scenario) -> list[Zone]:
+    """Footprint of every threat against ``scenario.reference_link``, for the command view."""
+    link = scenario.reference_link
+    t = 10 ** (scenario.js_threshold_db / 10)
+
+    def disc(eirp_w: float) -> Disc:
+        return Disc(0.0, 0.0, link.range_m * math.sqrt(eirp_w / (t * link.eirp_w)), "inside")
+
+    zones: list[Zone] = []
+    for j in scenario.friendly_jammers:
+        frame = LocalFrame(j.pos)
+        if j.antenna is None:
+            shape = ThreatShape(j.id, "friendly_jammer", disc(j.eirp_w))
+        else:
+            sidelobe = disc(j.eirp_w * 10 ** (j.antenna.sidelobe_db / 10))
+            shape = _directional(j.id, (0.0, 0.0), j.antenna, disc(j.eirp_w), sidelobe)
+        zones.append(_zone(shape, frame))
+    for threat in scenario.enemy_threats:
+        frame = LocalFrame(threat.pos)
+        match threat:
+            case EnemyJammer():
+                zones.append(
+                    _zone(ThreatShape(threat.id, "enemy_jammer", disc(threat.eirp_w)), frame)
+                )
+            case EnemyRadar():
+                zones.append(_zone(_radar(threat, frame), frame))
+    return zones
+
+
+def _radar(radar: EnemyRadar, frame: LocalFrame) -> ThreatShape:
+    x, y = frame.to_xy(radar.pos)
+    return ThreatShape(
+        radar.id, "radar", Disc(x=x, y=y, radius_m=radar.radius_m, forbidden="inside")
+    )
+
+
+def _zone(shape: ThreatShape, frame: LocalFrame) -> Zone:
+    return Zone(
+        threat=shape.threat,
+        kind=shape.kind,
+        forbidden=shape.disc.forbidden,
+        ring=[frame.to_position(x, y) for x, y in _ring(shape)],
+    )
+
+
+Box = tuple[float, float, float, float]
+"""x min, y min, x max, y max in a local frame."""
+
+
+def _grid_box(grid: Grid, frame: LocalFrame) -> Box:
+    """The grid in ``frame``, one cell larger on each side: a zone just past the edge may still
+    forbid an edge cell, through the half-diagonal margin of the masks."""
+    x, y = frame.to_xy(grid.origin)
+    pad = grid.cell_m
+    return (x - pad, y - pad, x + grid.cols * grid.cell_m + pad, y + grid.rows * grid.cell_m + pad)
+
+
+def _touches(shape: ThreatShape, box: Box) -> bool:
+    """True if the forbidden side of ``shape`` may overlap ``box``.
+
+    A directional zone lies within the union of its two discs: may say yes too often, never
+    too rarely.
+    """
+    discs = [shape.disc] if shape.sidelobe is None else [shape.disc, shape.sidelobe]
+    return any(_disc_touches(d, box) for d in discs)
+
+
+def _disc_touches(disc: Disc, box: Box) -> bool:
+    x0, y0, x1, y1 = box
+    if disc.forbidden == "inside":
+        nearest_x, nearest_y = min(max(disc.x, x0), x1), min(max(disc.y, y0), y1)
+        return math.hypot(nearest_x - disc.x, nearest_y - disc.y) < disc.radius_m
+    farthest_x = max(abs(disc.x - x0), abs(disc.x - x1))
+    farthest_y = max(abs(disc.y - y0), abs(disc.y - y1))
+    return math.hypot(farthest_x, farthest_y) > disc.radius_m
 
 
 def _directional(

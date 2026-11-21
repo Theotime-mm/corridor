@@ -1,26 +1,28 @@
 import { Badge, Button, Card, Group, Progress, Stack, Text } from '@mantine/core'
 import { send } from '../api/client'
 import { mockPlan } from '../dev/mockPlan'
-import { clockLabel } from '../domain/view'
-import { useStore } from '../store'
-
-const PLAN_COLOR = { preview: 'orange', approved: 'green', fallback: 'red', baseline: 'gray' } as const
-const STATUS_COLOR = { planned: 'blue', flying: 'green', arrived: 'gray' } as const
+import { clockLabel, missionOf } from '../domain/view'
+import { useSelectedMission, useStore } from '../store'
+import { PLAN_COLOR, STATUS_COLOR } from './colors'
 
 export function MissionCard() {
   const snapshot = useStore((s) => s.snapshot)
-  const status = useStore((s) => s.missionStatus)
-  const plan = useStore((s) => s.plan)
-  const drone = useStore((s) => s.drone)
+  const callsign = useStore((s) => s.callsign)
   const cuts = useStore((s) => s.cuts)
-  if (!snapshot) return null
-  const { mission: m, start_time } = snapshot.scenario
+  const view = useSelectedMission()
+  if (!snapshot || !view) return null
+  const { start_time, command_callsign } = snapshot.scenario
+  const m = missionOf(snapshot.scenario, view.constraints.mission)
+  if (!m) return null
+  const { status, plan, drone } = view
+  // The server enforces it too; the button only reflects the rule.
+  const canLaunch = callsign === m.pilot_callsign || callsign === command_callsign
 
   const injectMock = () =>
     useStore.getState().apply({
       seq: useStore.getState().seq,
       sim_time_s: useStore.getState().clock.sim_time_s,
-      payload: mockPlan(snapshot.scenario, Object.values(cuts)),
+      payload: mockPlan(m, Object.values(cuts)),
     })
 
   return (
@@ -32,6 +34,10 @@ export function MissionCard() {
       <Text size="sm" c="dimmed">
         Pilot {m.pilot_callsign} · band {m.band} · {m.cruise_speed_mps} m/s · battery {Math.round(m.battery_max_s / 60)} min ·
         earliest departure {clockLabel(start_time, m.departure_s)}
+      </Text>
+      <Text size="xs" c="dimmed" mt={4}>
+        Concerned: jammers {view.constraints.jammers.join(', ') || 'none'} · threats{' '}
+        {view.constraints.threats.join(', ') || 'none'}
       </Text>
 
       {plan ? (
@@ -62,16 +68,23 @@ export function MissionCard() {
       )}
 
       <Group mt="sm">
-        <Button
-          size="xs"
-          disabled={status !== 'planned' || !plan || plan.status === 'preview'}
-          title={plan?.status === 'preview' ? 'The plan relies on a cut not confirmed yet' : undefined}
-          onClick={() => send({ type: 'mission.launch' })}
-        >
-          Launch mission
-        </Button>
+        {canLaunch && (
+          <Button
+            size="xs"
+            disabled={status !== 'planned' || !plan || plan.status === 'preview'}
+            title={plan?.status === 'preview' ? 'The plan relies on a cut not confirmed yet' : undefined}
+            onClick={() => send({ type: 'mission.launch', mission: m.id })}
+          >
+            Launch mission
+          </Button>
+        )}
         {status === 'flying' && (
-          <Button size="xs" variant="light" color="orange" onClick={() => send({ type: 'inject.delay', delay_s: 120 })}>
+          <Button
+            size="xs"
+            variant="light"
+            color="orange"
+            onClick={() => send({ type: 'inject.delay', mission: m.id, delay_s: 120 })}
+          >
             Hold drone 120 s (demo)
           </Button>
         )}

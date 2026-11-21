@@ -1,4 +1,5 @@
-// Timeline: one row per friendly jammer (its cuts) + one row for the drone (planned route).
+// Timeline: one row per friendly jammer in view (its cuts) + one row per drone in view (its
+// planned route).
 // The orange cursor follows live time; drag it to scrub (map follows), "Back to live" resets.
 import { useEffect, useRef } from 'react'
 import { Timeline } from 'vis-timeline/standalone'
@@ -18,7 +19,7 @@ function fromTl(startTime: string, d: Date): number {
   const base = Date.parse(startTime)
   return (d.getTime() - new Date(base).getTimezoneOffset() * 60_000 - base) / 1000
 }
-const DRONE_GROUP = '__drone__'
+const droneGroup = (mission: string) => `__drone__${mission}`
 
 interface Item {
   id: string
@@ -35,7 +36,7 @@ export function TimelinePanel() {
   const timeline = useRef<Timeline | null>(null)
   const snapshot = useStore((s) => s.snapshot)
   const cuts = useStore((s) => s.cuts)
-  const plan = useStore((s) => s.plan)
+  const missions = useStore((s) => s.missions)
   const viewTimeS = useStore((s) => s.viewTimeS)
   const live = useLiveSimTime(4)
   const start = snapshot?.scenario.start_time
@@ -46,11 +47,12 @@ export function TimelinePanel() {
     const st = snapshot.scenario.start_time
     const groups = [
       ...snapshot.scenario.friendly_jammers.map((j) => ({ id: j.id, content: `${j.id} · ${j.operator_callsign}` })),
-      { id: DRONE_GROUP, content: snapshot.scenario.mission.drone_id },
+      ...snapshot.scenario.missions.map((m) => ({ id: droneGroup(m.id), content: `${m.drone_id} (${m.id})` })),
     ]
+    const horizon = Math.max(1800, ...snapshot.scenario.missions.map((m) => m.battery_max_s + m.departure_s))
     const tl = new Timeline(container.current, [], groups, {
       start: toTl(st, 0),
-      end: toTl(st, Math.max(1800, snapshot.scenario.mission.battery_max_s + snapshot.scenario.mission.departure_s)),
+      end: toTl(st, horizon),
       stack: false,
       showCurrentTime: false,
       zoomMin: 60_000,
@@ -82,22 +84,24 @@ export function TimelinePanel() {
       className: `cut cut-${c.status}`,
       title: `${c.id} by ${c.requested_by}`,
     }))
-    const route = plan?.optimised_route ?? []
-    for (let i = 0; i < route.length - 1; i++) {
-      const a = route[i]
-      const b = route[i + 1]
-      if (b.t <= a.t) continue
-      next.push({
-        id: `seg-${i}`,
-        group: DRONE_GROUP,
-        start: toTl(start, a.t),
-        end: toTl(start, b.t),
-        content: a.action,
-        className: `seg seg-${a.action}`,
-      })
+    for (const [mission, view] of Object.entries(missions)) {
+      const route = view.plan?.optimised_route ?? []
+      for (let i = 0; i < route.length - 1; i++) {
+        const a = route[i]
+        const b = route[i + 1]
+        if (b.t <= a.t) continue
+        next.push({
+          id: `seg-${mission}-${i}`,
+          group: droneGroup(mission),
+          start: toTl(start, a.t),
+          end: toTl(start, b.t),
+          content: a.action,
+          className: `seg seg-${a.action}`,
+        })
+      }
     }
     timeline.current?.setItems(next)
-  }, [cuts, plan, start, snapshot])
+  }, [cuts, missions, start, snapshot])
 
   // Cursor follows live time unless the user is scrubbing.
   useEffect(() => {

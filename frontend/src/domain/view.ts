@@ -1,6 +1,6 @@
 // Pure helpers to render any instant from the snapshot, the cuts and the last plan
 // (see "Rendering on the front" in docs/architecture.md). No React, no map.
-import type { Cut, Grid, Position, RoutePoint } from '../api/protocol'
+import type { Cut, Grid, Mission, Position, RoutePoint, Scenario } from '../api/protocol'
 
 export type ZoneState = 'on' | 'cut' | 'pending'
 
@@ -50,4 +50,21 @@ export function gridBounds(grid: Grid): [number, number][] {
 /** HH:MM:SS (UTC) of a simulated time, from the scenario start_time. */
 export function clockLabel(startTime: string, t: number): string {
   return new Date(Date.parse(startTime) + t * 1000).toISOString().slice(11, 19)
+}
+
+/** The scenario entry of a mission in view. */
+export function missionOf(scenario: Scenario, id: string): Mission | undefined {
+  return scenario.missions.find((m) => m.id === id)
+}
+
+/** Smallest box around several grids, as two [lon, lat] corners (south-west, north-east). */
+export function boundsOf(grids: Grid[]): [[number, number], [number, number]] | null {
+  const corners = grids.flatMap(gridBounds)
+  if (corners.length === 0) return null
+  const lons = corners.map(([lon]) => lon)
+  const lats = corners.map(([, lat]) => lat)
+  return [
+    [Math.min(...lons), Math.min(...lats)],
+    [Math.max(...lons), Math.max(...lats)],
+  ]
 }
