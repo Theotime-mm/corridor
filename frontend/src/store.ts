@@ -79,7 +79,7 @@ export const useStore = create<State>((set, get) => ({
           cuts: Object.fromEntries(p.cuts.map((c) => [c.id, c])),
           clock: p.clock,
           missionStatus: p.mission_status,
-          plan: null,
+          plan: p.plan ?? null,
           actor: get().actor || p.scenario.mission.pilot_callsign,
         })
         return

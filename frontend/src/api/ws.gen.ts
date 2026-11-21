@@ -334,9 +334,7 @@ export interface NotificationAction {
   cut: Cut4;
 }
 /**
- * Planner output. Not emitted yet: the planner is not wired in.
- *
- * Defined now so the front end can code against its shape.
+ * Planner output, after every change to the cuts while the mission is planned.
  *
  * This interface was referenced by `CorridorWs`'s JSON-Schema
  * via the `definition` "PlanUpdated".
@@ -385,6 +383,10 @@ export interface Snapshot {
   clock: ClockState;
   cuts: Cuts1;
   mission_status: MissionStatus;
+  /**
+   * Latest plan; None until the first one.
+   */
+  plan: PlanUpdated | null;
 }
 /**
  * This interface was referenced by `CorridorWs`'s JSON-Schema
