@@ -111,35 +111,51 @@ def create_app(
         allow_headers=["*"],
     )
 
+    def _find_dem_path(name: str) -> Path | None:
+        for candidate in [
+            Path("data") / name,
+            Path("backend/data") / name,
+            Path(__file__).resolve().parents[4] / "data" / name,
+        ]:
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _select_dem() -> DemProvider:
+        launch_p = scenario.mission.launch
+        ny = _find_dem_path("copernicus_newyork.tif")
+        if 40.5 <= launch_p.lat <= 41.0 and ny:
+            return RasterDem(ny)
+        annecy = _find_dem_path("copernicus_annecy.tif")
+        if 45.5 <= launch_p.lat <= 46.5 and annecy:
+            return RasterDem(annecy)
+        hk = _find_dem_path("copernicus_hongkong.tif")
+        if 22.0 <= launch_p.lat <= 22.5 and hk:
+            return RasterDem(hk)
+        munich = _find_dem_path("copernicus_munich.tif")
+        if munich:
+            return RasterDem(munich)
+        return SyntheticDem(
+            base_elevation_m=520.0,
+            hills=[
+                HillFeature(
+                    center=Position(lat=48.160, lon=11.550),
+                    radius_m=1200.0,
+                    height_m=95.0,
+                ),
+                HillFeature(
+                    center=Position(lat=48.130, lon=11.580),
+                    radius_m=1000.0,
+                    height_m=80.0,
+                ),
+            ],
+        )
+
     @app.get("/api/rf/coverage")
     async def get_rf_coverage(drone_h_agl_m: float = 20.0) -> dict[str, Any]:
         """Return terrain-aware RF coverage GeoJSON contours for scenario threats."""
         features: list[dict[str, Any]] = []
-        launch_p = scenario.mission.launch
-        dem: DemProvider
-
-        if 45.5 <= launch_p.lat <= 46.5 and Path("data/copernicus_annecy.tif").exists():
-            dem = RasterDem(Path("data/copernicus_annecy.tif"))
-        elif 22.0 <= launch_p.lat <= 22.5 and Path("data/copernicus_hongkong.tif").exists():
-            dem = RasterDem(Path("data/copernicus_hongkong.tif"))
-        elif Path("data/copernicus_munich.tif").exists():
-            dem = RasterDem(Path("data/copernicus_munich.tif"))
-        else:
-            dem = SyntheticDem(
-                base_elevation_m=520.0,
-                hills=[
-                    HillFeature(
-                        center=Position(lat=48.160, lon=11.550),
-                        radius_m=1200.0,
-                        height_m=95.0,
-                    ),
-                    HillFeature(
-                        center=Position(lat=48.130, lon=11.580),
-                        radius_m=1000.0,
-                        height_m=80.0,
-                    ),
-                ],
-            )
+        dem = _select_dem()
 
         friendly_contours = [
             ContourLevel(-70.0, "Friendly Denied (-70 dBm)", "#e03131", 0.32, "#c92a2a", 2),
@@ -190,32 +206,6 @@ def create_app(
                     features.append(f)
 
         return {"type": "FeatureCollection", "features": features}
-
-    def _select_dem() -> DemProvider:
-        launch_p = scenario.mission.launch
-        if 40.5 <= launch_p.lat <= 41.0 and Path("data/copernicus_newyork.tif").exists():
-            return RasterDem(Path("data/copernicus_newyork.tif"))
-        if 45.5 <= launch_p.lat <= 46.5 and Path("data/copernicus_annecy.tif").exists():
-            return RasterDem(Path("data/copernicus_annecy.tif"))
-        if 22.0 <= launch_p.lat <= 22.5 and Path("data/copernicus_hongkong.tif").exists():
-            return RasterDem(Path("data/copernicus_hongkong.tif"))
-        if Path("data/copernicus_munich.tif").exists():
-            return RasterDem(Path("data/copernicus_munich.tif"))
-        return SyntheticDem(
-            base_elevation_m=520.0,
-            hills=[
-                HillFeature(
-                    center=Position(lat=48.160, lon=11.550),
-                    radius_m=1200.0,
-                    height_m=95.0,
-                ),
-                HillFeature(
-                    center=Position(lat=48.130, lon=11.580),
-                    radius_m=1000.0,
-                    height_m=80.0,
-                ),
-            ],
-        )
 
     @app.get("/api/rf/heatmap")
     async def get_rf_heatmap(

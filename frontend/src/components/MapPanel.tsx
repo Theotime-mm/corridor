@@ -101,21 +101,34 @@ export function MapPanel() {
   useEffect(() => {
     if (!view.current) return
     let timeoutId: number | undefined
+    let abortCtrl: AbortController | null = null
+
     view.current.onHover((pos) => {
       window.clearTimeout(timeoutId)
+      abortCtrl?.abort()
       if (!pos) {
         setProbe(null)
         return
       }
       timeoutId = window.setTimeout(() => {
-        fetch(`/api/rf/probe?lat=${pos.lat.toFixed(5)}&lon=${pos.lon.toFixed(5)}`)
+        abortCtrl = new AbortController()
+        fetch(`/api/rf/probe?lat=${pos.lat.toFixed(5)}&lon=${pos.lon.toFixed(5)}`, {
+          signal: abortCtrl.signal,
+        })
           .then((r) => (r.ok ? r.json() : null))
           .then((data) => {
             if (data) setProbe(data)
           })
-          .catch(() => {})
+          .catch((err) => {
+            if (err?.name !== 'AbortError') console.warn('Probe error:', err)
+          })
       }, 70)
     })
+
+    return () => {
+      window.clearTimeout(timeoutId)
+      abortCtrl?.abort()
+    }
   }, [])
 
   useEffect(() => {

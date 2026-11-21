@@ -485,7 +485,7 @@ def compute_js_heatmap_geojson(
 
     half = step_m / 2.0
     d_lat = math.degrees(half / EARTH_RADIUS_M)
-    d_lon = math.degrees(half / (EARTH_RADIUS_M * frame._cos_lat))
+    d_lon = math.degrees(half / (EARTH_RADIUS_M * max(1e-6, frame._cos_lat)))
 
     features: list[dict[str, Any]] = []
     for i, p in enumerate(grid_pts):

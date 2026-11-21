@@ -142,6 +142,14 @@ export function createMapView(container: HTMLElement): MapView {
     map.setLayoutProperty('rf-heatmap-cells', 'visibility', v(visibility.heatmap))
   }
 
+  map.on('error', (e) => {
+    // Suppress non-critical tile loading errors (e.g. offline fallback for remote terrain)
+    if (e.error?.message?.includes('terrarium') || e.error?.message?.includes('tile')) {
+      return
+    }
+    console.warn('MapLibre warning:', e.error || e)
+  })
+
   map.on('load', () => {
     // 1. Add 3D Terrarium raster-dem source
     map.addSource('terrain-dem', {
