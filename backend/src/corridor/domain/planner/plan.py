@@ -1,5 +1,6 @@
 """Planning entry points: from a mission, its scenario and the cuts to timed routes and their
-comparison. Each mission is planned on its own, on its own grid."""
+comparison. Each mission is planned on its own, on its own grid. Every route returned is
+smoothed (``corridor.domain.planner.smooth``) on the masks it was searched on."""
 
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from corridor.domain.events import PlanMetrics, PlanStatus, RouteAction, RoutePo
 from corridor.domain.geo import Cell, Grid, LocalFrame, Position
 from corridor.domain.planner.astar import Step, earliest_path
 from corridor.domain.planner.masks import TimedMasks, timed_masks
+from corridor.domain.planner.smooth import smooth_route
 from corridor.domain.scenario import Mission, Scenario
 from corridor.domain.state import Cut
 from corridor.domain.zones import ThreatShape, forbidden_shapes
@@ -86,7 +88,7 @@ def plan_route(
     not, so takeoff is a variable: the search runs for takeoff times swept every
     ``COARSE_TAKEOFF_STEP_S``, then every 5 s around the best, and keeps the least flight
     time, then the earliest arrival. A better takeoff narrower than the coarse step can be
-    missed. None when no route fits the battery.
+    missed. The best grid route is then smoothed. None when no route fits the battery.
     """
     start, goal = grid.cell_of(mission.launch), grid.cell_of(mission.target)
     if start is None or goal is None:
@@ -113,9 +115,14 @@ def plan_route(
                 best = route
         return best
 
+    def smoothed(route: list[RoutePoint] | None) -> list[RoutePoint] | None:
+        if route is None:
+            return None
+        return smooth_route(route, grid, timed, mission.cruise_speed_mps)
+
     best = search([mission.departure_s], None)
     if not windows:
-        return best
+        return smoothed(best)
     # A route that uses a window is in its zone after the window opens, so taking off more
     # than ``flight_s(best)`` before the first window cannot beat ``best``. A route that uses
     # no window does no better from a later takeoff. Exact, and it skips hopeless searches
@@ -128,7 +135,7 @@ def plan_route(
         return None
     around = _takeoff(best)
     fine = _steps(around - COARSE_TAKEOFF_STEP_S, around + COARSE_TAKEOFF_STEP_S, 5.0)
-    return search((t for t in fine if t >= mission.departure_s), best)
+    return smoothed(search((t for t in fine if t >= mission.departure_s), best))
 
 
 def plan_fallback(
@@ -154,6 +161,7 @@ def plan_fallback(
     route = _search(grid, airborne, timed, start, goal, now_s, now_s + mission.battery_max_s)
     if route is None:
         return None
+    route = smooth_route(route, grid, timed, mission.cruise_speed_mps, delay_takeoff=False)
     return MissionPlan(
         status="fallback",
         metrics=_metrics(mission, route, route),

@@ -25,6 +25,7 @@ from corridor.domain.events import (
     JammerRestarted,
     MissionCreated,
     MissionStatusChanged,
+    MissionUpdated,
     Notification,
     PlanUpdated,
     ThreatAdded,
@@ -110,7 +111,7 @@ class Audience:
                 return event.to == viewer.callsign
             case PlanUpdated() | DroneState() | MissionStatusChanged():
                 return event.mission in scope.missions
-            case MissionCreated():
+            case MissionCreated() | MissionUpdated():
                 return event.mission.id in scope.missions
             case ThreatAdded() | ThreatRemoved():
                 return not scope.missions.isdisjoint(event.missions)

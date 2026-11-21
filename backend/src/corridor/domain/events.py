@@ -40,6 +40,15 @@ class MissionCreated(Model):
     mission: Mission
 
 
+class MissionUpdated(Model):
+    """A mission on the ground got new points or a new departure; its plan is dropped and a
+    new one requested. Every client gets a new snapshot right after: the mission may enter or
+    leave its view."""
+
+    type: Literal["mission.updated"] = "mission.updated"
+    mission: Mission
+
+
 class ThreatAdded(Model):
     """The command added an enemy threat or a zone to avoid. Clients that see it get a new
     snapshot right after: zones, grids and scopes may all have changed."""
@@ -139,6 +148,7 @@ Event = Annotated[
     | CutConfirmed
     | ClockChanged
     | MissionCreated
+    | MissionUpdated
     | ThreatAdded
     | ThreatRemoved
     | MissionStatusChanged

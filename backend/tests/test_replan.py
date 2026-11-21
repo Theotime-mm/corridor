@@ -10,11 +10,13 @@ from corridor.domain.commands import (
     RequestMission,
     ScheduleCut,
     SetClock,
+    UpdateMission,
 )
 from corridor.domain.events import (
     CutScheduled,
     Event,
     MissionCreated,
+    MissionUpdated,
     Notification,
     PlanMetrics,
     PlanUpdated,
@@ -306,3 +308,46 @@ def test_a_request_that_gives_no_zones_leaves_the_state_unchanged(
     assert [m.id for m in engine.scenario.missions] == ["M1", "M2"]
     assert set(engine.missions) == set(engine.state.missions) == {"M1", "M2"}
     assert replanner.requests == []
+
+
+def update_m2_onto_m1(engine: Engine, actor: str = "PILOT-2") -> list[Event]:
+    """Move M2 (J4, to the south) onto M1's points (J3)."""
+    m1 = engine.scenario.missions[0]
+    command = UpdateMission(
+        actor=actor, mission="M2", launch=m1.launch, target=m1.target, departure_s=900
+    )
+    return engine.submit(command)
+
+
+def test_updating_a_mission_replans_it_and_drops_the_old_plan(
+    two_missions: Scenario, replanner: FakeReplanner, wall: list[float]
+) -> None:
+    engine = make_engine(two_missions, replanner, wall)
+    engine.request_plans(["M2"])
+    old = replanner.requests[0]
+    events = update_m2_onto_m1(engine)
+
+    updated = next(e.mission for e in events if isinstance(e, MissionUpdated))
+    assert (updated.launch, updated.departure_s) == (engine.scenario.missions[0].launch, 900)
+    assert engine.scenario.mission("M2") == updated
+    runtime = engine.missions["M2"]
+    assert runtime.constraints.jammers == ["J3"]
+    assert runtime.plan is None
+    assert [(r.mission, r.revision) for r in replanner.requests] == [("M2", 1), ("M2", 2)]
+
+    old.done(old.revision, stub_plan())  # computed for the old points: dropped
+    assert runtime.plan is None
+    replanner.requests[1].done(2, stub_plan())
+    assert runtime.plan is not None and runtime.plan.revision == 2
+
+
+def test_only_its_pilot_or_the_command_updates_a_mission_on_the_ground(
+    two_missions: Scenario, replanner: FakeReplanner, wall: list[float]
+) -> None:
+    engine = make_engine(two_missions, replanner, wall)
+    with pytest.raises(CommandRejected, match="only the pilot of M2"):
+        update_m2_onto_m1(engine, actor="PILOT-1")
+    update_m2_onto_m1(engine, actor="CMD")
+    engine.state.missions["M2"] = "flying"
+    with pytest.raises(CommandRejected, match="already flying"):
+        update_m2_onto_m1(engine)
