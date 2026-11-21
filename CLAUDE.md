@@ -58,8 +58,8 @@ A standalone working prototype of a planner + CoT output is in `resources/spectr
 - Python 3.12, uv, project in `backend/`. From `backend/`: `uv run pytest`,
   `uv run ruff check src tests`, `uv run ruff format --check src tests`, `uv run mypy` (strict).
   Line length 100.
-- Package: `backend/src/corridor/`. TAK code in `backend/src/corridor/tak/`. Front end will live
-  in `web/`.
+- Package: `backend/src/corridor/`. TAK code in `backend/src/corridor/tak/`. Front end in
+  `frontend/` (first draft, see `frontend/README.md`).
 - After changing a WebSocket message model, regenerate the schema from `backend/`:
   `uv run corridor-schema > ../schema/ws.schema.json` (a test fails otherwise).
 - Docs and code comments in English.
