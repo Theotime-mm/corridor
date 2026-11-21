@@ -38,6 +38,8 @@ backend/src/corridor/
                   constraints (planning grid, concerned threats), nominal footprints
     terrain.py    elevation file and flight levels: ground per planning grid (cached), profile
                   under a route; flat ground without a file
+    zones3d.py    3D jamming zones: J/S per cell and per flight level through the terrain
+                  (knife-edge diffraction), loss fields cached per emitter
     state.py      Cut, ClockState, WorldState (runtime state)
     commands.py   domain commands (discriminated union on "type")
     events.py     domain events (discriminated union on "type")
@@ -579,6 +581,21 @@ from the jammer outward (64 vertices across the beam, the rest on the sidelobe d
 `Zone` contract does not change. A directional jammer with k < 1 is rejected at server start:
 its zone would be an unbounded wedge that a ring cannot describe. The beam is horizontal only
 (the planner is 2D plus time) and its edge is hard, without gain roll-off.
+
+**3D jamming zones** (`domain/zones3d.py`, not used by the planner yet). For each cell of a
+mission grid and each flight level, J/S from each jammer on the mission band:
+received power = EIRP toward the cell - free-space loss over the slant distance - diffraction
+loss. Diffraction: terrain profile from the emitter to the cell centre, one sample per cell,
+Earth bulge (k = 4/3), the most blocking obstacle as a single knife edge (ITU-R P.526), as in
+`rf/coverage.py`. Lost where J/S >= `js_threshold_db`. Choices that keep zones on the large side:
+the drone at level L flies L above the cell's `high` ground; a jammer path takes its obstacles
+from `low`, the pilot link from `centre` (the surface model as is; `high` would block a 2 m
+pilot antenna everywhere). Antenna heights are constants for now: jammer 10 m, pilot 2 m. On
+flat ground the top level gives the 2D disc. On the Munich demo, J3 denies at 30 m 73 % of M1's
+grid with a 2 m pilot antenna and 13 % with a 10 m mast, against the 2D disc (9 %) at 120 m and
+above: flying low costs the pilot link. About 0.2 to 0.7 s per mission, then cached (a cut
+recomputes nothing; a new threat only its own field). Enemy position margins and masks over
+time come with the 3D masks; `pilot_signal` is the input of the pilot minimum signal.
 
 **Forbidden cells.** Cuts are piecewise constant in time, so `masks.py` precomputes one mask per
 interval between cut boundaries with numpy, not one per time step. A cell is forbidden when it
