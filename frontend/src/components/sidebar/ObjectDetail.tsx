@@ -3,8 +3,10 @@ import { Badge, Button, Stack, Text, UnstyledButton } from '@mantine/core'
 import { formatPosition, friendlyZoneState } from '../../domain/view'
 import { useLiveSimTime } from '../../hooks/useSimNow'
 import { useStore } from '../../store'
+import { THREAT_COLOR } from '../colors'
 import { RadioIcon } from '../Icons'
 import { CutRow, PanelHeader, SectionTitle } from './parts'
+import { threatSummary } from './threat'
 
 interface Props {
   readonly kind: 'jammer' | 'threat'
@@ -82,18 +84,12 @@ function ThreatDetail({ id }: { readonly id: string }) {
   return (
     <Stack gap="xs">
       <PanelHeader
-        title={`Enemy ${threat.type} ${id}`}
-        badge={<Badge color={threat.type === 'radar' ? 'orange' : 'grape'}>{threat.type}</Badge>}
+        title={threat.type === 'avoid' ? `Zone to avoid ${id}` : `Enemy ${threat.type} ${id}`}
+        badge={<Badge color={THREAT_COLOR[threat.type]}>{threat.type}</Badge>}
         onBack={openList}
       />
-      <Text size="xs" c="dimmed">
-        {threat.type === 'radar'
-          ? `Detection range ${(threat.radius_m / 1000).toFixed(1)} km (estimated)`
-          : `${threat.bands.join(', ')} · ${threat.eirp_w} W EIRP (estimated)`}
-      </Text>
-      <Text size="xs" c="dimmed">
-        {formatPosition(threat.pos)} · position known to ±{threat.position_error_m} m
-      </Text>
+      <Text size="xs" c="dimmed">{threatSummary(threat)}</Text>
+      <Text size="xs" c="dimmed">{formatPosition(threat.pos)}</Text>
 
       <SectionTitle>Missions it concerns</SectionTitle>
       <ConcernedMissions match={(_, threats) => threats.includes(id)} />
