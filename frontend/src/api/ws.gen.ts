@@ -219,10 +219,30 @@ export type Lon1 = number;
 export type T = number;
 export type Action = "fly" | "hover" | "ground";
 /**
+ * Height above the ground, metres; None while the planner is 2D.
+ */
+export type AltM = number | null;
+/**
  * As if every jammer stayed on.
  */
 export type BaselineRoute = RoutePoint[];
 export type OptimisedRoute = RoutePoint[];
+/**
+ * Along the route from take-off.
+ */
+export type DistanceM = number;
+/**
+ * Ground elevation above sea level; 0 without a map.
+ */
+export type GroundM = number;
+/**
+ * Drone height above the ground, None if unknown.
+ */
+export type AltM1 = number | null;
+/**
+ * Ground and drone height under the optimised route.
+ */
+export type Profile = ProfilePoint[];
 export type Type24 = "drone.state";
 export type Mission7 = string;
 export type Action1 = "fly" | "hover" | "ground";
@@ -291,6 +311,16 @@ export type EndS2 = number;
 export type Cuts = PlannedCut[];
 export type FriendlyJammers = FriendlyJammer[];
 export type EnemyThreats = (EnemyRadar | EnemyJammer | AvoidZone)[];
+/**
+ * Elevation file (GeoTIFF, metres above sea level) in backend/data/, or an absolute path. None: flat ground.
+ */
+export type Dem = string | null;
+/**
+ * Flight levels, metres above the ground, lowest first.
+ *
+ * @minItems 1
+ */
+export type LevelsM = [number, ...number[]];
 /**
  * @minItems 1
  */
@@ -736,6 +766,7 @@ export interface PlanUpdated {
   metrics: PlanMetrics;
   baseline_route: BaselineRoute;
   optimised_route: OptimisedRoute;
+  profile: Profile;
 }
 /**
  * This interface was referenced by `CorridorWs`'s JSON-Schema
@@ -758,6 +789,18 @@ export interface RoutePoint {
   lon: Lon1;
   t: T;
   action: Action;
+  alt_m: AltM;
+}
+/**
+ * A sample of the altitude profile under a route.
+ *
+ * This interface was referenced by `CorridorWs`'s JSON-Schema
+ * via the `definition` "ProfilePoint".
+ */
+export interface ProfilePoint {
+  distance_m: DistanceM;
+  ground_m: GroundM;
+  alt_m: AltM1;
 }
 /**
  * Simulated drone, every engine tick (about 2 Hz) while it flies.
@@ -820,6 +863,7 @@ export interface Scenario {
   command_callsign: CommandCallsign;
   friendly_jammers: FriendlyJammers;
   enemy_threats: EnemyThreats;
+  terrain: Terrain;
   pilots: Pilots;
   missions: Missions2;
 }
@@ -869,6 +913,16 @@ export interface Antenna {
 export interface PlannedCut {
   start_s: StartS2;
   end_s: EndS2;
+}
+/**
+ * Ground under the area and flight levels above it (``corridor.domain.terrain``).
+ *
+ * This interface was referenced by `CorridorWs`'s JSON-Schema
+ * via the `definition` "Terrain".
+ */
+export interface Terrain {
+  dem: Dem;
+  levels_m: LevelsM;
 }
 /**
  * This interface was referenced by `CorridorWs`'s JSON-Schema
@@ -992,6 +1046,7 @@ export interface Scenario1 {
   command_callsign: CommandCallsign;
   friendly_jammers: FriendlyJammers;
   enemy_threats: EnemyThreats;
+  terrain: Terrain;
   pilots: Pilots;
   missions: Missions2;
 }

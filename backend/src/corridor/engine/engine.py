@@ -79,8 +79,10 @@ from corridor.domain.scenario import (
     EnemyThreat,
     Mission,
     Scenario,
+    Terrain,
 )
 from corridor.domain.state import Cut, WorldState
+from corridor.domain.terrain import profile
 from corridor.domain.zones import (
     MissionConstraints,
     ThreatShape,
@@ -222,7 +224,7 @@ class Engine:
                 text = f"{mission.id}: no route to the target within battery."
                 self._publish([Notification(to=mission.pilot_callsign, text=text)])
                 return
-            runtime.plan = _plan_updated(mission.id, revision, plan)
+            runtime.plan = _plan_updated(mission.id, revision, plan, self.scenario.terrain)
             self._publish([runtime.plan])
 
         return done
@@ -335,7 +337,7 @@ class Engine:
                 self._publish([Notification(to=pilot, text=text)])
                 return
             now = self.clock.now()
-            runtime.plan = _plan_updated(runtime.mission.id, revision, plan)
+            runtime.plan = _plan_updated(runtime.mission.id, revision, plan, self.scenario.terrain)
             runtime.flight = Flight(
                 route=plan.optimised_route,
                 revision=revision,
@@ -651,7 +653,9 @@ class Engine:
         return [Notification(to=mission.pilot_callsign, text=text)]
 
 
-def _plan_updated(mission_id: str, revision: int, plan: MissionPlan) -> PlanUpdated:
+def _plan_updated(
+    mission_id: str, revision: int, plan: MissionPlan, terrain: Terrain
+) -> PlanUpdated:
     return PlanUpdated(
         mission=mission_id,
         revision=revision,
@@ -659,4 +663,5 @@ def _plan_updated(mission_id: str, revision: int, plan: MissionPlan) -> PlanUpda
         metrics=plan.metrics,
         baseline_route=plan.baseline_route,
         optimised_route=plan.optimised_route,
+        profile=profile(terrain, plan.optimised_route),
     )

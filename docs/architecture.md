@@ -36,6 +36,8 @@ backend/src/corridor/
     scenario.py   Scenario and its parts, consistency checks, JSON loader
     zones.py      J/S zones (circles of Apollonius, directional beams), radar discs, mission
                   constraints (planning grid, concerned threats), nominal footprints
+    terrain.py    elevation file and flight levels: ground per planning grid (cached), profile
+                  under a route; flat ground without a file
     state.py      Cut, ClockState, WorldState (runtime state)
     commands.py   domain commands (discriminated union on "type")
     events.py     domain events (discriminated union on "type")
@@ -103,6 +105,14 @@ Two kinds of data, kept apart:
 - A zone to avoid (`type: "avoid"`, `radius_m`) sits with the enemy threats: reported activity
   with no located emitter. It is shown and counts as a concerned threat, but the planner may
   cross it for now (`forbidden_shapes` leaves it out); a high cost instead of nothing is to do.
+- **Terrain** (`terrain`, optional). `dem`: a GeoTIFF elevation file in metres above sea level,
+  in `backend/data/` (Copernicus GLO-30 crops, a surface model: roofs and trees included, about
+  30 m resolution), or an absolute path; checked at load. Without it the ground is flat at 0 m.
+  `levels_m`: flight levels above the ground, lowest first (default 30 / 60 / 120 / 250 m,
+  the proposal of open decision 39). Each process reads the file once; the ground of a mission
+  grid is cached by file and grid, so a threat that changes the grid gets its ground computed
+  again on first use. The RF endpoints (`/api/rf/*`) use the same file instead of guessing one
+  from the latitude. Not used by the planner yet (3D search and masks to come).
 - A friendly jammer may have a directional `antenna` (`azimuth_deg` clockwise from north,
   `beamwidth_deg` up to 180, `sidelobe_db` up to 0). Its `eirp_w` is then the main beam EIRP.
   Without `antenna` it is omnidirectional. Enemy jammers are omnidirectional for now.
@@ -153,6 +163,7 @@ Scenario file:
   "js_threshold_db": 0,
   "reference_link": { "eirp_w": 10, "range_m": 5000 },
   "command_callsign": "CMD",
+  "terrain": { "dem": "copernicus_munich.tif", "levels_m": [30, 60, 120, 250] },
   "friendly_jammers": [
     { "id": "J3", "operator_callsign": "EW-J3", "pos": { "lat": 48.145, "lon": 11.567 },
       "eirp_w": 2, "bands": ["2.4GHz", "5.8GHz"],
@@ -673,7 +684,10 @@ Server to client:
 
 - A route point is the position at time `t`; `action` (`fly`, `hover`, `ground`) holds until
   the next point. Only points where the direction or the action changes are sent; the front
-  interpolates.
+  interpolates. `alt_m` is the height above the ground, `null` while the planner is 2D.
+- `profile`: under the optimised route, every 50 m of flight and at each point: `distance_m`
+  from take-off, `ground_m` (above sea level, 0 without an elevation file) and `alt_m`
+  (height above the ground, interpolated, `null` while unknown). For the altitude profile.
 - `status`: `preview` (uses a cut not confirmed yet, not flyable), `approved` (confirmed cuts
   only), `fallback` (drone late, safe route from its position), `baseline` (no usable cut).
 - Battery figures are consumption in % of `battery_max_s`. `saved_pct` is relative to the
