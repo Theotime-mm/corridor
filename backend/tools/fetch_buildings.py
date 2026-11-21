@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
 import sys
 import time
 import urllib.parse
@@ -31,6 +32,16 @@ DEFAULT_HEIGHT_M = 10.0
 OUT_DIR = Path(__file__).resolve().parent.parent / "data"
 
 
+def tls_context() -> ssl.SSLContext:
+    """Certificates from certifi (installed with the backend) when available: some Python
+    builds check against an outdated list of their own ("certificate has expired")."""
+    try:
+        import certifi
+    except ImportError:
+        return ssl.create_default_context()
+    return ssl.create_default_context(cafile=certifi.where())
+
+
 def query(south: float, west: float, north: float, east: float) -> str:
     box = f"{south},{west},{north},{east}"
     return f'[out:json][timeout:300];way["building"]({box});out tags geom;'
@@ -46,7 +57,9 @@ def fetch(overpass_query: str) -> dict:
                 request = urllib.request.Request(
                     endpoint, data=body, headers={"User-Agent": "corridor-edth/1.0"}
                 )
-                with urllib.request.urlopen(request, timeout=360) as response:
+                with urllib.request.urlopen(
+                    request, timeout=360, context=tls_context()
+                ) as response:
                     return json.loads(response.read())
             except Exception as exc:  # network or server busy: try again, then elsewhere
                 last_error = exc
