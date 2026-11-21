@@ -1857,7 +1857,7 @@
             }
           ],
           "default": null,
-          "description": "Elevation file (GeoTIFF, metres above sea level) in backend/data/, or an absolute path. None: flat ground.",
+          "description": "Elevation file (GeoTIFF, metres above sea level), a path inside backend/data/. None: flat ground.",
           "title": "Dem"
         },
         "levels_m": {

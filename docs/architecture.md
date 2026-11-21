@@ -107,11 +107,23 @@ Two kinds of data, kept apart:
   cross it for now (`forbidden_shapes` leaves it out); a high cost instead of nothing is to do.
 - **Terrain** (`terrain`, optional). `dem`: a GeoTIFF elevation file in metres above sea level,
   in `backend/data/` (Copernicus GLO-30 crops, a surface model: roofs and trees included, about
-  30 m resolution), or an absolute path; checked at load. Without it the ground is flat at 0 m.
-  `levels_m`: flight levels above the ground, lowest first (default 30 / 60 / 120 / 250 m,
+  30 m resolution); a name leading out of that folder is refused, and checked at load (scenario
+  files themselves are only read from `backend/scenarios/`). Without it the ground is flat at
+  0 m. `levels_m`: flight levels above the ground, lowest first (default 30 / 60 / 120 / 250 m,
   the proposal of open decision 39). Each process reads the file once; the ground of a mission
   grid is cached by file and grid, so a threat that changes the grid gets its ground computed
-  again on first use. The RF endpoints (`/api/rf/*`) use the same file instead of guessing one
+  again on first use.
+- **Two grounds per cell** (`ground_cells`), from the file's own pixels (no interpolation) every
+  10 m across the cell. A river reads at the bottom of its bed and roofs and trees stand above
+  the ground, so one value per cell is wrong one way or the other:
+  - `high`, for clearance: highest ground in the cell and its 8 neighbours. Flight levels are
+    measured from it: a drone at 30 m is 30 m above banks, bridges, roofs and trees within a
+    cell around it. On the demo it is a median 8 m above the cell centre, up to about 60 m.
+  - `low`, for terrain masking: lowest ground in the cell. A hill or building hiding the drone
+    from an emitter is never taken higher than it is, so no shadow is assumed where there is
+    none (jamming zones, pilot link, radars).
+  The Copernicus water body mask is not used (not in `backend/data/`); the rule above covers
+  rivers narrower than about two cells. The RF endpoints (`/api/rf/*`) use the same file instead of guessing one
   from the latitude. Not used by the planner yet (3D search and masks to come).
 - A friendly jammer may have a directional `antenna` (`azimuth_deg` clockwise from north,
   `beamwidth_deg` up to 180, `sidelobe_db` up to 0). Its `eirp_w` is then the main beam EIRP.

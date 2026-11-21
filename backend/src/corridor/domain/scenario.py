@@ -171,8 +171,8 @@ class Terrain(Model):
     dem: str | None = Field(
         default=None,
         description=(
-            "Elevation file (GeoTIFF, metres above sea level) in backend/data/, or an absolute"
-            " path. None: flat ground."
+            "Elevation file (GeoTIFF, metres above sea level), a path inside backend/data/."
+            " None: flat ground."
         ),
     )
     levels_m: tuple[float, ...] = Field(
@@ -304,10 +304,19 @@ def _no_duplicates(what: str, values: list[str]) -> None:
         raise ValueError(f"duplicate {what}: {duplicates}")
 
 
+SCENARIOS_DIR = Path(__file__).resolve().parents[3] / "scenarios"
+"""``backend/scenarios``: the only folder scenario files are read from."""
+
+
 def load_scenario(path: Path) -> Scenario:
-    """Raises ValueError if the file is invalid or its elevation file is missing."""
+    """Raises ValueError if ``path`` is outside ``SCENARIOS_DIR``, if the file is invalid or if
+    its elevation file is missing: the server reads no file the team did not put there."""
     from corridor.domain.terrain import check_terrain  # terrain imports this module
 
-    scenario = Scenario.model_validate_json(path.read_text(encoding="utf-8"))
+    root = SCENARIOS_DIR.resolve()
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"scenario files must be inside {root}: {path}")
+    scenario = Scenario.model_validate_json(resolved.read_text(encoding="utf-8"))
     check_terrain(scenario.terrain)
     return scenario

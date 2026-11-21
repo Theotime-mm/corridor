@@ -7,13 +7,15 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
+from corridor.domain import scenario as scenario_module
+from corridor.domain import terrain
 from corridor.domain.events import PlanMetrics, RoutePoint
 from corridor.domain.geo import Grid, LocalFrame, Position
 from corridor.domain.planner.plan import MissionPlan
 from corridor.domain.rf.dem import RasterDem
 from corridor.domain.scenario import Mission, Scenario, Terrain, load_scenario
 from corridor.domain.state import Cut
-from corridor.domain.terrain import PROFILE_STEP_M, ground_grid, profile
+from corridor.domain.terrain import PROFILE_STEP_M, ground_cells, profile
 from corridor.engine.clock import SimClock
 from corridor.engine.engine import Engine
 from corridor.engine.replan import PlanDone
@@ -58,8 +60,11 @@ class FakeReplanner:
 
 
 @pytest.fixture
-def hill(tmp_path: Path) -> Terrain:
-    """100 x 100 pixels from ORIGIN (north-west corner), a hill at pixel (row 50, col 50)."""
+def hill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Terrain:
+    """100 x 100 pixels from ORIGIN (north-west corner), a hill at pixel (row 50, col 50).
+
+    ``tmp_path`` stands for ``backend/data``."""
+    monkeypatch.setattr(terrain, "DATA_DIR", tmp_path)
     RasterDem.create_test_raster(
         tmp_path / "hill.tif",
         origin_lat=ORIGIN.lat,
@@ -69,7 +74,7 @@ def hill(tmp_path: Path) -> Terrain:
         hill_center_px=(50, 50),
         hill_height_m=HILL_M,
     )
-    return Terrain(dem=str(tmp_path / "hill.tif"))
+    return Terrain(dem="hill.tif")
 
 
 def pixel_centre(row: int, col: int) -> Position:
@@ -80,7 +85,7 @@ def pixel_centre(row: int, col: int) -> Position:
 
 def test_raster_is_sampled_at_pixel_centres(hill: Terrain) -> None:
     assert hill.dem is not None
-    dem = RasterDem(hill.dem)
+    dem = RasterDem(terrain.dem_path(hill.dem))
     top = pixel_centre(50, 50)
     assert dem.get_elevation(top) == pytest.approx(BASE_M + HILL_M)
     lons = np.array([[top.lon, ORIGIN.lon + 0.001]])
@@ -92,24 +97,70 @@ def test_raster_is_sampled_at_pixel_centres(hill: Terrain) -> None:
 
 def test_without_a_file_the_ground_is_flat() -> None:
     grid = Grid(origin=ORIGIN, cell_m=100, cols=4, rows=3)
-    ground = ground_grid(Terrain(), grid)
-    assert ground.shape == (3, 4)
-    assert not ground.any()
+    ground = ground_cells(Terrain(), grid)
+    for array in (ground.centre, ground.high, ground.low):
+        assert array.shape == (3, 4)
+        assert not array.any()
 
 
 def test_ground_of_a_grid_is_cached_until_the_grid_changes(hill: Terrain) -> None:
     south_west = Position(lat=ORIGIN.lat - 100 * PIXEL_DEG, lon=ORIGIN.lon)
     grid = Grid(origin=south_west, cell_m=100, cols=20, rows=20)
-    ground = ground_grid(hill, grid)
-    assert ground.shape == (20, 20)
-    assert ground_grid(hill, grid) is ground
-    assert not ground.flags.writeable
+    ground = ground_cells(hill, grid)
+    assert ground.centre.shape == (20, 20)
+    assert ground_cells(hill, grid) is ground
+    assert not ground.high.flags.writeable
     # The cell holding the hill top is the highest, the corners are on the base.
     col, row = (int(v // 100) for v in LocalFrame(south_west).to_xy(pixel_centre(50, 50)))
-    assert np.unravel_index(ground.argmax(), ground.shape) == (row, col)
-    assert ground[0, 0] == pytest.approx(BASE_M)
+    assert np.unravel_index(ground.centre.argmax(), (20, 20)) == (row, col)
+    assert ground.centre[0, 0] == pytest.approx(BASE_M)
+    assert (ground.low <= ground.centre).all()
+    assert (ground.centre <= ground.high).all()
     wider = grid.model_copy(update={"cols": 25})
-    assert ground_grid(hill, wider).shape == (20, 25)
+    assert ground_cells(hill, wider).high.shape == (20, 25)
+
+
+def write_raster(path: Path, data: np.ndarray) -> None:
+    """``data`` as a GeoTIFF, row 0 to the north, its north-west corner on ORIGIN."""
+    import rasterio
+    from rasterio.transform import from_origin
+
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=data.shape[0],
+        width=data.shape[1],
+        count=1,
+        dtype="float32",
+        crs="EPSG:4326",
+        transform=from_origin(ORIGIN.lon, ORIGIN.lat, PIXEL_DEG, PIXEL_DEG),
+    ) as dst:
+        dst.write(data.astype(np.float32), 1)
+
+
+def test_rivers_and_roofs_count_for_clearance_not_for_masking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(terrain, "DATA_DIR", tmp_path)
+    data = np.full((60, 60), 320.0)
+    data[:, 28:30] = 300.0  # a river about 40 m wide, 20 m below its banks, north to south
+    data[10, 10] = 360.0  # a building: one pixel, 40 m above the ground
+    write_raster(tmp_path / "valley.tif", data)
+    south_west = Position(lat=ORIGIN.lat - 60 * PIXEL_DEG, lon=ORIGIN.lon)
+    grid = Grid(origin=south_west, cell_m=100, cols=12, rows=18)  # inside the 60 x 60 pixels
+    ground = ground_cells(Terrain(dem="valley.tif"), grid)
+    frame = LocalFrame(south_west)
+    river = pixel_centre(30, 28)  # mid-river
+    col, row = (int(v // 100) for v in frame.to_xy(river))
+    assert ground.low[row, col] == pytest.approx(300, abs=1)  # masking sees the river bed
+    assert ground.high[row, col] == pytest.approx(320, abs=1)  # clearance sees the banks
+    roof_col, roof_row = (int(v // 100) for v in frame.to_xy(pixel_centre(10, 10)))
+    assert ground.high[roof_row, roof_col] == pytest.approx(360, abs=1)
+    # One cell around too, for a horizontal margin; not two cells away.
+    assert ground.high[roof_row, roof_col + 1] == pytest.approx(360, abs=1)
+    assert ground.high[roof_row, roof_col + 3] == pytest.approx(320, abs=1)
+    assert ground.low[roof_row, roof_col] == pytest.approx(320, abs=1)
 
 
 def test_profile_follows_the_route_over_the_hill(hill: Terrain) -> None:
@@ -149,12 +200,17 @@ def test_levels_must_rise() -> None:
             Terrain(levels_m=levels)
 
 
-def test_scenario_files_name_an_elevation_file_that_exists(tmp_path: Path) -> None:
+def test_scenario_files_name_an_elevation_file_that_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     for path in Path(__file__).resolve().parent.parent.glob("scenarios/*.json"):
         assert load_scenario(path).terrain.dem is not None, path
     demo = Path(__file__).resolve().parent.parent / "scenarios" / "demo.json"
     missing = tmp_path / "missing.json"
     missing.write_text(demo.read_text().replace("copernicus_munich.tif", "nowhere.tif"))
+    with pytest.raises(ValueError, match="must be inside"):
+        load_scenario(missing)  # tmp_path is not the scenarios folder
+    monkeypatch.setattr(scenario_module, "SCENARIOS_DIR", tmp_path)
     with pytest.raises(ValueError, match="elevation file not found"):
         load_scenario(missing)
 
@@ -180,3 +236,9 @@ def test_plans_carry_the_profile_of_their_route(scenario: Scenario) -> None:
     assert updated is not None
     assert updated.profile[-1].distance_m == pytest.approx(8000, rel=0.02)
     assert all(400 < p.ground_m < 700 for p in updated.profile)  # Munich, from the elevation file
+
+
+@pytest.mark.parametrize("name", ["/etc/hostname", "../pyproject.toml", "../../README.md"])
+def test_elevation_file_must_stay_in_the_data_folder(name: str) -> None:
+    with pytest.raises(ValueError, match="must be inside"):
+        terrain.check_terrain(Terrain(dem=name))
