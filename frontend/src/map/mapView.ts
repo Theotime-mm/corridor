@@ -60,13 +60,29 @@ const DRONE_SNAP_M = 2000
 type FC = FeatureCollection
 const empty = (): FC => ({ type: 'FeatureCollection', features: [] })
 
+export interface DroneDisplayOpts {
+  glide?: boolean
+  headingDeg?: number | null
+  action?: RoutePoint['action'] | null
+  isLive?: boolean
+}
+
+export interface LayerVisibility {
+  zones?: boolean
+  baseline?: boolean
+  grid?: boolean
+}
+
 export interface MapView {
   setScene(scenario: Scenario, grid: Grid, zones: Zone[]): void
   setZoneStates(states: Record<string, ZoneState>): void
   /** The detour is hidden when it is the planned route itself (status baseline or fallback). */
   setRoutes(plan: PlanUpdated | null): void
   /** `glide`: animate from the shown position (live updates); otherwise jump (scrubbing). */
-  setDrone(pos: Position | null, glide?: boolean): void
+  setDrone(pos: Position | null, opts?: boolean | DroneDisplayOpts): void
+  setLayerVisibility(vis: LayerVisibility): void
+  fitScene(): void
+  centerOnDrone(): void
   destroy(): void
 }
 
@@ -83,14 +99,26 @@ export function createMapView(container: HTMLElement): MapView {
   let grid: Grid | null = null
   let zones: Zone[] = []
   let states: Record<string, ZoneState> = {}
+  let visibility: Required<LayerVisibility> = { grid: true, baseline: true, zones: true }
   const markers: maplibregl.Marker[] = []
   let droneMarker: maplibregl.Marker | null = null
   let droneShown: Position | null = null
   let droneFrame = 0
+  let droneEl: HTMLDivElement | null = null
+  let droneGlyph: HTMLDivElement | null = null
 
   const setData = (source: string, data: FC) => {
     pending[source] = data
     if (loaded) (map.getSource(source) as GeoJSONSource | undefined)?.setData(data)
+  }
+
+  const applyVisibility = () => {
+    if (!loaded) return
+    const v = (on: boolean) => (on ? 'visible' : 'none')
+    map.setLayoutProperty('grid-line', 'visibility', v(visibility.grid))
+    map.setLayoutProperty('route-baseline', 'visibility', v(visibility.baseline))
+    map.setLayoutProperty('zones-fill', 'visibility', v(visibility.zones))
+    map.setLayoutProperty('zones-line', 'visibility', v(visibility.zones))
   }
 
   map.on('load', () => {
@@ -116,6 +144,7 @@ export function createMapView(container: HTMLElement): MapView {
       paint: { 'line-color': ['get', 'color'], 'line-width': 4 },
     })
     loaded = true
+    applyVisibility()
   })
 
   const renderZones = () => {
@@ -171,23 +200,48 @@ export function createMapView(container: HTMLElement): MapView {
         : []
       setData('routes', { type: 'FeatureCollection', features })
     },
-    setDrone(pos, glide = false) {
+    setDrone(pos, opts = false) {
+      const isGlide = typeof opts === 'boolean' ? opts : (opts?.glide ?? false)
+      const heading = typeof opts === 'object' ? opts?.headingDeg : null
+      const isLive = typeof opts === 'object' ? Boolean(opts?.isLive) : false
+      const action = typeof opts === 'object' ? opts?.action : null
+
       cancelAnimationFrame(droneFrame)
       if (!pos) {
         droneMarker?.remove()
         droneMarker = null
         droneShown = null
+        droneEl = null
+        droneGlyph = null
         return
       }
       if (!droneMarker) {
         const el = document.createElement('div')
         el.className = 'drone-marker'
+        const pulse = document.createElement('span')
+        pulse.className = 'drone-pulse'
+        const glyph = document.createElement('div')
+        glyph.className = 'drone-glyph'
+        glyph.innerHTML =
+          '<svg width="22" height="22" viewBox="0 0 24 24" fill="#22b8cf" stroke="#0b0f17" stroke-width="2" stroke-linejoin="round"><path d="M12 2 20 20l-8-4-8 4 8-18z"/></svg>'
+        el.append(pulse, glyph)
         droneMarker = new maplibregl.Marker({ element: el }).setLngLat([pos.lon, pos.lat]).addTo(map)
         droneShown = pos
-        return
+        droneEl = el
+        droneGlyph = glyph
       }
+
+      if (droneEl) {
+        droneEl.classList.toggle('drone-live', isLive)
+        droneEl.classList.toggle('drone-hover', action === 'hover')
+        droneEl.classList.toggle('drone-ground', action === 'ground')
+      }
+      if (droneGlyph && heading !== undefined && heading !== null) {
+        droneGlyph.style.transform = `rotate(${Math.round(heading)}deg)`
+      }
+
       const from = droneShown
-      if (!glide || !from || distanceM(from, pos) > DRONE_SNAP_M) {
+      if (!isGlide || !from || distanceM(from, pos) > DRONE_SNAP_M) {
         droneMarker.setLngLat([pos.lon, pos.lat])
         droneShown = pos
         return
@@ -201,6 +255,20 @@ export function createMapView(container: HTMLElement): MapView {
         if (f < 1) droneFrame = requestAnimationFrame(step)
       }
       droneFrame = requestAnimationFrame(step)
+    },
+    setLayerVisibility(vis) {
+      visibility = { ...visibility, ...vis }
+      applyVisibility()
+    },
+    fitScene() {
+      if (!grid) return
+      const b = gridBounds(grid)
+      map.fitBounds([b[0], b[2]], { padding: 48, duration: 450 })
+    },
+    centerOnDrone() {
+      if (droneShown) {
+        map.easeTo({ center: [droneShown.lon, droneShown.lat], duration: 450 })
+      }
     },
     destroy() {
       cancelAnimationFrame(droneFrame)
