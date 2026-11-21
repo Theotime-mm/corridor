@@ -1325,15 +1325,23 @@
     },
     "ProfilePoint": {
       "additionalProperties": false,
-      "description": "A sample of the altitude profile under a route.",
+      "description": "A sample of the route in 3D, for the altitude profile and a 3D view.",
       "properties": {
         "distance_m": {
           "description": "Along the route from take-off.",
           "title": "Distance M",
           "type": "number"
         },
+        "lat": {
+          "title": "Lat",
+          "type": "number"
+        },
+        "lon": {
+          "title": "Lon",
+          "type": "number"
+        },
         "ground_m": {
-          "description": "Ground elevation above sea level; 0 without a map.",
+          "description": "Ground surface above sea level; 0 without a map.",
           "title": "Ground M",
           "type": "number"
         },
@@ -1346,14 +1354,29 @@
               "type": "null"
             }
           ],
-          "description": "Drone height above the ground, None if unknown.",
+          "description": "As RoutePoint.alt_m, interpolated; None in 2D.",
           "title": "Alt M"
+        },
+        "amsl_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Drone altitude above sea level; None in 2D.",
+          "title": "Amsl M"
         }
       },
       "required": [
         "distance_m",
+        "lat",
+        "lon",
         "ground_m",
-        "alt_m"
+        "alt_m",
+        "amsl_m"
       ],
       "title": "ProfilePoint",
       "type": "object"
@@ -1482,8 +1505,21 @@
             }
           ],
           "default": null,
-          "description": "Height above the ground, metres; None while the planner is 2D.",
+          "description": "Height above the clearance ground (highest ground within a cell around), metres; 0 on the ground; None in 2D.",
           "title": "Alt M"
+        },
+        "amsl_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Altitude above sea level, metres; None in 2D.",
+          "title": "Amsl M"
         }
       },
       "required": [
@@ -1491,7 +1527,8 @@
         "lon",
         "t",
         "action",
-        "alt_m"
+        "alt_m",
+        "amsl_m"
       ],
       "title": "RoutePoint",
       "type": "object"

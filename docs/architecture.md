@@ -730,10 +730,15 @@ Server to client:
 
 - A route point is the position at time `t`; `action` (`fly`, `hover`, `ground`) holds until
   the next point. Only points where the direction or the action changes are sent; the front
-  interpolates. `alt_m` is the height above the ground, `null` while the planner is 2D.
-- `profile`: under the optimised route, every 50 m of flight and at each point: `distance_m`
-  from take-off, `ground_m` (above sea level, 0 without an elevation file) and `alt_m`
-  (height above the ground, interpolated, `null` while unknown). For the altitude profile.
+  interpolates. In 3D, `alt_m` is the height above the clearance ground (the highest ground
+  within a cell around: what the drone must clear), 0 on the ground, and `amsl_m` the altitude
+  above sea level (clearance ground of the point's cell + `alt_m`). Both `null` in 2D.
+- A level is a height above the clearance ground, so between two route points the drone
+  follows that ground: its altitude is not a straight line between the points. `profile`
+  carries it: under the optimised route, every 50 m of flight and at each point, `distance_m`
+  from take-off, `lat`, `lon`, `ground_m` (ground surface above sea level, 0 without an
+  elevation file), `alt_m` and `amsl_m` (`null` in 2D). For the altitude profile and a 3D
+  view of the route (a line through the `profile` points at `amsl_m`).
 - `status`: `preview` (uses a cut not confirmed yet, not flyable), `approved` (confirmed cuts
   only), `fallback` (drone late, safe route from its position), `baseline` (no usable cut).
 - Battery figures are consumption in % of `battery_max_s`. `saved_pct` is relative to the
