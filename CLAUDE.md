@@ -16,6 +16,8 @@ does not build drones or other hardware.
 Problem behind it: friendly jammers knock out friendly drones (EM fratricide). In Ukraine, pilots
 negotiate corridors past friendly jammers over group chats.
 
+Functional spec (users, inputs, behaviour, safety rules, demo story): `docs/feature.md`.
+
 ## Decided
 
 - No ATAK plugin (TAK SDK not available). Corridor is an external service speaking CoT to an
@@ -38,8 +40,9 @@ negotiate corridors past friendly jammers over group chats.
 - Demo scenario tuning (current one: `backend/scenarios/demo.json`).
 - Pitch content.
 
-A standalone prototype of a planner + CoT output exists outside this repo (`../spectrum_sync`).
-It is a reference only, not adopted.
+A standalone working prototype of a planner + CoT output is in `resources/spectrum_sync/`
+(reference only, not adopted). Research notes with sources: `resources/research.md`.
+`resources/README.md` says what each piece is for.
 
 ## Existing solutions (for positioning)
 
