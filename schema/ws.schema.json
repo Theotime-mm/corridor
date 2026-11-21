@@ -76,6 +76,7 @@
               "cut.cancel": "#/$defs/CancelCut",
               "cut.confirm": "#/$defs/ConfirmCut",
               "cut.schedule": "#/$defs/ScheduleCut",
+              "inject.delay": "#/$defs/InjectDelay",
               "mission.launch": "#/$defs/LaunchMission"
             },
             "propertyName": "type"
@@ -95,6 +96,9 @@
             },
             {
               "$ref": "#/$defs/SetClock"
+            },
+            {
+              "$ref": "#/$defs/InjectDelay"
             }
           ],
           "title": "Command"
@@ -283,6 +287,55 @@
       "title": "CutScheduled",
       "type": "object"
     },
+    "DroneState": {
+      "additionalProperties": false,
+      "description": "Simulated drone, every engine tick (about 2 Hz) while it flies.",
+      "properties": {
+        "type": {
+          "const": "drone.state",
+          "default": "drone.state",
+          "title": "Type",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/Position"
+        },
+        "action": {
+          "enum": [
+            "fly",
+            "hover",
+            "ground"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "battery_used_pct": {
+          "description": "Of battery_max_s, airborne time so far.",
+          "title": "Battery Used Pct",
+          "type": "number"
+        },
+        "delay_s": {
+          "description": "Behind the schedule of the route being flown.",
+          "title": "Delay S",
+          "type": "number"
+        },
+        "revision": {
+          "description": "Plan revision of the route being flown.",
+          "title": "Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "position",
+        "action",
+        "battery_used_pct",
+        "delay_s",
+        "revision"
+      ],
+      "title": "DroneState",
+      "type": "object"
+    },
     "EnemyJammer": {
       "additionalProperties": false,
       "properties": {
@@ -469,6 +522,62 @@
       "title": "Grid",
       "type": "object"
     },
+    "InjectDelay": {
+      "additionalProperties": false,
+      "description": "Demo twist: hold the flying drone where it is for ``delay_s`` simulated seconds.",
+      "properties": {
+        "type": {
+          "const": "inject.delay",
+          "default": "inject.delay",
+          "title": "Type",
+          "type": "string"
+        },
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "delay_s": {
+          "exclusiveMinimum": 0,
+          "maximum": 1800,
+          "title": "Delay S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "actor",
+        "delay_s"
+      ],
+      "title": "InjectDelay",
+      "type": "object"
+    },
+    "JammerRestarted": {
+      "additionalProperties": false,
+      "description": "A confirmed cut ended: the jammer is back on.",
+      "properties": {
+        "type": {
+          "const": "jammer.restarted",
+          "default": "jammer.restarted",
+          "title": "Type",
+          "type": "string"
+        },
+        "jammer": {
+          "title": "Jammer",
+          "type": "string"
+        },
+        "cut": {
+          "title": "Cut",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "jammer",
+        "cut"
+      ],
+      "title": "JammerRestarted",
+      "type": "object"
+    },
     "LaunchMission": {
       "additionalProperties": false,
       "properties": {
@@ -567,7 +676,8 @@
         "status": {
           "enum": [
             "planned",
-            "flying"
+            "flying",
+            "arrived"
           ],
           "title": "Status",
           "type": "string"
@@ -918,6 +1028,8 @@
                   "cut.cancelled": "#/$defs/CutCancelled",
                   "cut.confirmed": "#/$defs/CutConfirmed",
                   "cut.scheduled": "#/$defs/CutScheduled",
+                  "drone.state": "#/$defs/DroneState",
+                  "jammer.restarted": "#/$defs/JammerRestarted",
                   "mission.status": "#/$defs/MissionStatusChanged",
                   "notification": "#/$defs/Notification",
                   "plan.updated": "#/$defs/PlanUpdated"
@@ -945,6 +1057,12 @@
                 },
                 {
                   "$ref": "#/$defs/PlanUpdated"
+                },
+                {
+                  "$ref": "#/$defs/DroneState"
+                },
+                {
+                  "$ref": "#/$defs/JammerRestarted"
                 }
               ]
             },
@@ -1065,7 +1183,8 @@
         "mission_status": {
           "enum": [
             "planned",
-            "flying"
+            "flying",
+            "arrived"
           ],
           "title": "Mission Status",
           "type": "string"
@@ -1080,6 +1199,17 @@
             }
           ],
           "description": "Latest plan; None until the first one."
+        },
+        "drone": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DroneState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Latest drone state; None before take-off."
         }
       },
       "required": [
@@ -1090,7 +1220,8 @@
         "clock",
         "cuts",
         "mission_status",
-        "plan"
+        "plan",
+        "drone"
       ],
       "title": "Snapshot",
       "type": "object"

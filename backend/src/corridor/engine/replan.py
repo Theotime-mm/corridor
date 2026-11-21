@@ -14,8 +14,8 @@ from collections.abc import Callable
 from concurrent.futures import Future, ProcessPoolExecutor
 from typing import Protocol
 
-from corridor.domain.geo import Grid
-from corridor.domain.planner.plan import MissionPlan, plan_mission
+from corridor.domain.geo import Grid, Position
+from corridor.domain.planner.plan import MissionPlan, plan_fallback, plan_mission
 from corridor.domain.scenario import Scenario
 from corridor.domain.state import Cut
 
@@ -28,6 +28,10 @@ PlanDone = Callable[[int, MissionPlan | None], None]
 class Replanner(Protocol):
     def request(
         self, revision: int, cuts: list[Cut], earliest_departure_s: float, done: PlanDone
+    ) -> None: ...
+
+    def request_fallback(
+        self, revision: int, position: Position, now_s: float, done: PlanDone
     ) -> None: ...
 
     def close(self) -> None: ...
@@ -51,12 +55,25 @@ class ProcessReplanner:
     def request(
         self, revision: int, cuts: list[Cut], earliest_departure_s: float, done: PlanDone
     ) -> None:
+        self._submit(
+            revision,
+            done,
+            self._pool.submit(plan_mission, self._scenario, self._grid, cuts, earliest_departure_s),
+        )
+
+    def request_fallback(
+        self, revision: int, position: Position, now_s: float, done: PlanDone
+    ) -> None:
+        self._submit(
+            revision,
+            done,
+            self._pool.submit(plan_fallback, self._scenario, self._grid, position, now_s),
+        )
+
+    def _submit(self, revision: int, done: PlanDone, future: Future[MissionPlan | None]) -> None:
         loop = asyncio.get_running_loop()
         if self._pending is not None:
             self._pending.cancel()  # only succeeds if it has not started: its result is stale
-        future = self._pool.submit(
-            plan_mission, self._scenario, self._grid, cuts, earliest_departure_s
-        )
         self._pending = future
 
         def finished(future: Future[MissionPlan | None]) -> None:

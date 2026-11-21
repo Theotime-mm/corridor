@@ -7,7 +7,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from corridor.domain.events import PlanMetrics, PlanStatus, RouteAction, RoutePoint
-from corridor.domain.geo import Cell, Grid, LocalFrame
+from corridor.domain.geo import Cell, Grid, LocalFrame, Position
 from corridor.domain.planner.astar import Step, earliest_path
 from corridor.domain.planner.masks import TimedMasks, timed_masks
 from corridor.domain.scenario import Mission, Scenario
@@ -125,6 +125,38 @@ def plan_route(scenario: Scenario, grid: Grid, cuts: Iterable[Cut] = ()) -> list
     around = _takeoff(best)
     fine = _steps(around - COARSE_TAKEOFF_STEP_S, around + COARSE_TAKEOFF_STEP_S, 5.0)
     return search((t for t in fine if t >= mission.departure_s), best)
+
+
+def plan_fallback(
+    scenario: Scenario, grid: Grid, position: Position, now_s: float
+) -> MissionPlan | None:
+    """Safe route for a drone already in the air at ``position``: no cut, take off now.
+
+    The pilot stays at the launch point, so the zones are those of the mission; only the
+    route starts elsewhere. Used when the drone can no longer keep its cut windows.
+    """
+    mission = scenario.mission
+    start, goal = grid.cell_of(position), grid.cell_of(mission.target)
+    if start is None or goal is None:
+        return None
+    timed = timed_masks(
+        grid,
+        mission_discs(scenario),
+        LocalFrame(mission.launch),
+        [],
+        now_s,
+        now_s + mission.battery_max_s,
+    )
+    airborne = mission.model_copy(update={"launch": position, "departure_s": now_s})
+    route = _search(grid, airborne, timed, start, goal, now_s, now_s + mission.battery_max_s)
+    if route is None:
+        return None
+    return MissionPlan(
+        status="fallback",
+        metrics=_metrics(mission, route, route),
+        baseline_route=route,
+        optimised_route=route,
+    )
 
 
 def flight_s(route: list[RoutePoint]) -> float:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncIterator, Callable
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -20,6 +21,18 @@ from corridor.engine.replan import Replanner
 
 ReplannerFactory = Callable[[Scenario, Grid], Replanner]
 
+TICK_S = 0.5
+log = logging.getLogger(__name__)
+
+
+async def _tick_forever(engine: Engine) -> None:
+    while True:
+        try:
+            engine.tick()
+        except Exception:
+            log.exception("engine tick failed")
+        await asyncio.sleep(TICK_S)
+
 
 def snapshot(engine: Engine, grid: Grid, zones: list[Zone]) -> Snapshot:
     return Snapshot(
@@ -30,6 +43,7 @@ def snapshot(engine: Engine, grid: Grid, zones: list[Zone]) -> Snapshot:
         cuts=list(engine.state.cuts.values()),
         mission_status=engine.state.mission_status,
         plan=engine.plan,
+        drone=engine.drone,
     )
 
 
@@ -69,7 +83,11 @@ def create_app(
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         engine.request_plan()
+        ticker = asyncio.create_task(_tick_forever(engine))
         yield
+        ticker.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await ticker
         if planner:
             planner.close()
 

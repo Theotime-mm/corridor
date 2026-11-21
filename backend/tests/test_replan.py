@@ -126,13 +126,17 @@ def test_stale_plan_is_dropped(
 def test_no_plan_once_the_drone_flies(
     engine: Engine, replanner: FakeReplanner, published: list[Event]
 ) -> None:
+    # Launch needs a flyable plan: the first one comes back, a second one is still out.
+    engine.request_plan()
+    first = replanner.requests[0]
+    first.done(first.revision, stub_plan())
     engine.request_plan()
     engine.submit(LaunchMission(actor="PILOT-1"))
     published.clear()
-    request = replanner.requests[0]
-    request.done(request.revision, stub_plan())
+    late = replanner.requests[1]
+    late.done(late.revision, stub_plan())
     schedule(engine)
-    assert len(replanner.requests) == 1
+    assert len(replanner.requests) == 2
     assert not any(isinstance(e, PlanUpdated) for e in published)
 
 
