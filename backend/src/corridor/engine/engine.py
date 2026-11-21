@@ -66,7 +66,7 @@ from corridor.domain.events import (
     ThreatAdded,
     ThreatRemoved,
 )
-from corridor.domain.geo import LocalFrame
+from corridor.domain.geo import Grid, LocalFrame
 from corridor.domain.planner.layers import forbidden_cells
 from corridor.domain.planner.plan import MissionPlan, route_metrics
 from corridor.domain.safety import (
@@ -88,7 +88,7 @@ from corridor.domain.scenario import (
     Terrain,
 )
 from corridor.domain.state import Cut, WorldState
-from corridor.domain.terrain import profile
+from corridor.domain.terrain import profile, with_altitude
 from corridor.domain.zones import (
     MissionConstraints,
     ThreatShape,
@@ -259,7 +259,9 @@ class Engine:
                 text = f"{mission.id}: no route to the target within battery."
                 self._publish([Notification(to=mission.pilot_callsign, text=text)])
                 return
-            runtime.plan = _plan_updated(mission.id, revision, plan, self.scenario.terrain)
+            runtime.plan = _plan_updated(
+                mission.id, revision, plan, self.scenario.terrain, runtime.constraints.grid
+            )
             self._publish([runtime.plan])
 
         return done
@@ -389,9 +391,15 @@ class Engine:
                 self._publish([Notification(to=pilot, text=text)])
                 return
             now = self.clock.now()
-            runtime.plan = _plan_updated(runtime.mission.id, revision, plan, self.scenario.terrain)
+            runtime.plan = _plan_updated(
+                runtime.mission.id,
+                revision,
+                plan,
+                self.scenario.terrain,
+                runtime.constraints.grid,
+            )
             runtime.flight = Flight(
-                route=plan.optimised_route,
+                route=runtime.plan.optimised_route,  # as sent, with altitudes
                 revision=revision,
                 air_before_s=runtime.flight.airborne_s(now),
             )
@@ -917,6 +925,7 @@ class Engine:
                 route = plan.optimised_route
             revision = plan.revision
             if through:
+                grid = runtime.constraints.grid
                 # The plan becomes the route flown, so every view (map, mission card, altitude
                 # profile, a client joining later) shows the straight route, not the detour.
                 runtime.revision += 1
@@ -925,9 +934,9 @@ class Engine:
                     update={
                         "revision": revision,
                         "status": "straight",
-                        "optimised_route": route,
+                        "optimised_route": with_altitude(self.scenario.terrain, grid, route),
                         "metrics": route_metrics(mission, plan.baseline_route, route),
-                        "profile": profile(self.scenario.terrain, route),
+                        "profile": profile(self.scenario.terrain, route, grid),
                         "choices": [],
                     }
                 )
@@ -951,15 +960,20 @@ class Engine:
 
 
 def _plan_updated(
-    mission_id: str, revision: int, plan: MissionPlan, terrain: Terrain
+    mission_id: str, revision: int, plan: MissionPlan, terrain: Terrain, grid: Grid
 ) -> PlanUpdated:
+    """The plan as sent: route points with their altitude above sea level, and the profile."""
     return PlanUpdated(
         mission=mission_id,
         revision=revision,
         status=plan.status,
         metrics=plan.metrics,
-        baseline_route=plan.baseline_route,
-        optimised_route=plan.optimised_route,
-        profile=profile(terrain, plan.optimised_route),
-        choices=plan.choices,
+        baseline_route=with_altitude(terrain, grid, plan.baseline_route),
+        optimised_route=with_altitude(terrain, grid, plan.optimised_route),
+        profile=profile(terrain, plan.optimised_route, grid),
+        # Each route choice with its altitude above sea level too, as the planned route.
+        choices=[
+            c.model_copy(update={"route": with_altitude(terrain, grid, c.route)})
+            for c in plan.choices
+        ],
     )

@@ -8,6 +8,7 @@ import { ROUTE_COLORS } from '../../map/mapView'
 import { useStore } from '../../store'
 import { STATUS_COLOR } from '../colors'
 import { RouteChoices } from '../RouteChoices'
+import { AltitudeProfile } from './AltitudeProfile'
 import { CutRow, PanelHeader, SectionTitle } from './parts'
 
 const PLAN_TEXT: Record<PlanUpdated['status'], { title: string; color: string; detail: string }> = {
@@ -115,6 +116,7 @@ export function MissionDetail({ id }: { readonly id: string }) {
           ) : (
             <BatteryBar label="Route" pct={plan.metrics.optimised_battery_used_pct} color={ROUTE_COLORS[plan.status]} />
           )}
+          <AltitudeProfile profile={plan.profile} levels={snapshot.scenario.terrain.levels_m} />
         </Stack>
       ) : (
         <Text size="sm" mt="sm" c="dimmed">Computing the first plan…</Text>

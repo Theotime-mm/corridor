@@ -21,6 +21,7 @@ export type MissionStatus = G.MissionView['status']
 export type Notification = G.Notification
 export type PlanUpdated = G.PlanUpdated
 export type RoutePoint = G.RoutePoint
+export type ProfilePoint = G.ProfilePoint
 export type DroneState = G.DroneState
 export type RouteChoice = G.RouteChoice
 export type ChoiceKind = G.RouteChoice['kind']

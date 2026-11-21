@@ -240,9 +240,13 @@ export type Lon1 = number;
 export type T = number;
 export type Action = "fly" | "hover" | "ground";
 /**
- * Height above the ground, metres; None while the planner is 2D.
+ * Height above the clearance ground (highest ground within a cell around), metres; 0 on the ground; None in 2D.
  */
 export type AltM = number | null;
+/**
+ * Altitude above sea level, metres; None in 2D.
+ */
+export type AmslM = number | null;
 /**
  * As if every jammer stayed on.
  */
@@ -252,14 +256,20 @@ export type OptimisedRoute = RoutePoint[];
  * Along the route from take-off.
  */
 export type DistanceM = number;
+export type Lat2 = number;
+export type Lon2 = number;
 /**
- * Ground elevation above sea level; 0 without a map.
+ * Ground surface above sea level; 0 without a map.
  */
 export type GroundM = number;
 /**
- * Drone height above the ground, None if unknown.
+ * As RoutePoint.alt_m, interpolated; None in 2D.
  */
 export type AltM1 = number | null;
+/**
+ * Drone altitude above sea level; None in 2D.
+ */
+export type AmslM1 = number | null;
 /**
  * Ground and drone height under the optimised route.
  */
@@ -409,6 +419,10 @@ export type Dem = string | null;
  * @minItems 1
  */
 export type LevelsM = [number, ...number[]];
+/**
+ * Building footprints with height_m (GeoJSON from tools/fetch_buildings.py), a path inside backend/data/; raised into the elevation. Needs dem.
+ */
+export type Buildings = string | null;
 /**
  * 2d: one layer, free-space zones (discs). 3d: the flight levels, zones through the terrain, climbs and descents.
  */
@@ -920,17 +934,21 @@ export interface RoutePoint {
   t: T;
   action: Action;
   alt_m: AltM;
+  amsl_m: AmslM;
 }
 /**
- * A sample of the altitude profile under a route.
+ * A sample of the route in 3D, for the altitude profile and a 3D view.
  *
  * This interface was referenced by `CorridorWs`'s JSON-Schema
  * via the `definition` "ProfilePoint".
  */
 export interface ProfilePoint {
   distance_m: DistanceM;
+  lat: Lat2;
+  lon: Lon2;
   ground_m: GroundM;
   alt_m: AltM1;
+  amsl_m: AmslM1;
 }
 /**
  * One route the pilot may pick. Only ``safe`` is flyable without the command's answer.
@@ -1110,6 +1128,7 @@ export interface PlannedCut {
 export interface Terrain {
   dem: Dem;
   levels_m: LevelsM;
+  buildings: Buildings;
   mode: Mode;
 }
 /**
