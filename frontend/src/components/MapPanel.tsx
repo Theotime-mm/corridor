@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { type CSSProperties, useEffect, useRef } from 'react'
 import { friendlyZoneState, positionAt } from '../domain/view'
 import { useViewTime } from '../hooks/useSimNow'
-import { createMapView, type MapView } from '../map/mapView'
+import { COLORS, createMapView, ROUTE_COLORS, type MapView } from '../map/mapView'
 import { useStore } from '../store'
 
 export function MapPanel() {
@@ -37,18 +37,50 @@ export function MapPanel() {
   }, [snapshot, cuts, t])
 
   useEffect(() => {
-    view.current?.setRoutes(plan?.baseline_route ?? null, plan?.optimised_route ?? null)
+    view.current?.setRoutes(plan)
   }, [plan])
 
-  // Live: the server's simulated drone. Scrubbing: where the plan puts it at that instant.
+  // Live: the server's simulated drone, glided between its updates. Scrubbing: where the plan
+  // puts it at that instant.
   useEffect(() => {
-    if (!scrubbing) {
-      view.current?.setDrone(drone?.position ?? null)
-      return
-    }
+    if (!scrubbing) view.current?.setDrone(drone?.position ?? null, true)
+  }, [drone, scrubbing])
+
+  useEffect(() => {
+    if (!scrubbing) return
     const at = plan ? positionAt(plan.optimised_route, t) : null
     view.current?.setDrone(at?.pos ?? null)
-  }, [plan, drone, scrubbing, t])
+  }, [plan, scrubbing, t])
 
-  return <div ref={container} className="map" />
+  return (
+    <div className="map-wrap">
+      <div ref={container} className="map" />
+      <MapLegend />
+    </div>
+  )
+}
+
+const LEGEND: { label: string; color: string; kind: 'area' | 'line' | 'dash' }[] = [
+  { label: 'Friendly jammer on', color: COLORS.friendlyOn, kind: 'area' },
+  { label: 'Cut pending confirmation', color: COLORS.friendlyPending, kind: 'area' },
+  { label: 'Cut confirmed (passable)', color: COLORS.friendlyCut, kind: 'area' },
+  { label: 'Enemy jammer', color: COLORS.enemy, kind: 'area' },
+  { label: 'Radar', color: COLORS.radar, kind: 'area' },
+  { label: 'Detour (all jammers on)', color: COLORS.baseline, kind: 'dash' },
+  { label: 'Planned route', color: ROUTE_COLORS.approved, kind: 'line' },
+  { label: 'Route awaiting confirmation', color: ROUTE_COLORS.preview, kind: 'line' },
+  { label: 'Fallback route', color: ROUTE_COLORS.fallback, kind: 'line' },
+]
+
+function MapLegend() {
+  return (
+    <div className="map-legend">
+      {LEGEND.map((l) => (
+        <div key={l.label} className="map-legend-row">
+          <span className={`map-legend-key map-legend-${l.kind}`} style={{ '--c': l.color } as CSSProperties} />
+          {l.label}
+        </div>
+      ))}
+    </div>
+  )
 }
