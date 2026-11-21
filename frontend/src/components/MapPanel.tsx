@@ -39,6 +39,7 @@ export function MapPanel() {
   const [showBaseline, setShowBaseline] = useState(true)
   const [showRf, setShowRf] = useState(false)
   const [showHeatmap, setShowHeatmap] = useState(false)
+  const [showRelief, setShowRelief] = useState(true)
   const [is3D, setIs3D] = useState(false)
   const [legendOpen, setLegendOpen] = useState(false)
   const [probe, setProbe] = useState<ProbeData | null>(null)
@@ -62,8 +63,9 @@ export function MapPanel() {
       baseline: showBaseline,
       rf: showRf,
       heatmap: showHeatmap,
+      relief: showRelief,
     })
-  }, [showZones, showBaseline, showRf, showHeatmap])
+  }, [showZones, showBaseline, showRf, showHeatmap, showRelief])
 
   useEffect(() => {
     if (!showRf) return
@@ -85,7 +87,7 @@ export function MapPanel() {
       return
     }
     let active = true
-    fetch('/api/rf/heatmap')
+    fetch('/api/rf/heatmap?cells=true')
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (active && data) view.current?.setRfHeatmap(data)
@@ -225,6 +227,15 @@ export function MapPanel() {
             title="Toggle baseline detour route"
           >
             Detour
+          </Button>
+          <Button
+            size="compact-xs"
+            variant={showRelief ? 'light' : 'subtle'}
+            color={showRelief ? 'indigo' : 'gray'}
+            onClick={() => setShowRelief((v) => !v)}
+            title="Toggle physical shaded relief and topography"
+          >
+            Relief
           </Button>
           <Button
             size="compact-xs"

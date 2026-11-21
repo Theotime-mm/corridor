@@ -114,6 +114,15 @@ def test_rf_heatmap_endpoint(scenario: Scenario) -> None:
     assert "js_db" in pt0["properties"]
     assert "status" in pt0["properties"]
 
+    # Test cells=true polygon quads
+    resp_cells = client.get("/api/rf/heatmap?step_m=500&cells=true")
+    assert resp_cells.status_code == 200
+    data_cells = resp_cells.json()
+    cell0 = data_cells["features"][0]
+    assert cell0["geometry"]["type"] == "Polygon"
+    assert "color" in cell0["properties"]
+    assert "opacity" in cell0["properties"]
+
 
 def test_rf_probe_endpoint(scenario: Scenario) -> None:
     client = TestClient(create_app(scenario, clock_factor=20, cell_m=100))

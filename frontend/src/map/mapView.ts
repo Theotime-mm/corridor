@@ -73,6 +73,7 @@ export interface LayerVisibility {
   grid?: boolean
   rf?: boolean
   heatmap?: boolean
+  relief?: boolean
 }
 
 export interface MapView {
@@ -114,7 +115,7 @@ export function createMapView(container: HTMLElement): MapView {
   let grid: Grid | null = null
   let zones: Zone[] = []
   let states: Record<string, ZoneState> = {}
-  let visibility: Required<LayerVisibility> = { grid: true, baseline: true, zones: true, rf: true, heatmap: false }
+  let visibility: Required<LayerVisibility> = { grid: true, baseline: true, zones: true, rf: true, heatmap: false, relief: true }
   const markers: maplibregl.Marker[] = []
   let droneMarker: maplibregl.Marker | null = null
   let droneShown: Position | null = null
@@ -130,6 +131,7 @@ export function createMapView(container: HTMLElement): MapView {
   const applyVisibility = () => {
     if (!loaded) return
     const v = (on: boolean) => (on ? 'visible' : 'none')
+    map.setLayoutProperty('hillshade-relief', 'visibility', v(visibility.relief))
     map.setLayoutProperty('grid-line', 'visibility', v(visibility.grid))
     map.setLayoutProperty('route-baseline', 'visibility', v(visibility.baseline))
     map.setLayoutProperty('zones-fill', 'visibility', v(visibility.zones))
@@ -137,6 +139,7 @@ export function createMapView(container: HTMLElement): MapView {
     map.setLayoutProperty('rf-coverage-fill', 'visibility', v(visibility.rf))
     map.setLayoutProperty('rf-coverage-line', 'visibility', v(visibility.rf))
     map.setLayoutProperty('rf-safe-baseline', 'visibility', v(visibility.heatmap))
+    map.setLayoutProperty('rf-heatmap-cells', 'visibility', v(visibility.heatmap))
     map.setLayoutProperty('rf-heatmap-layer', 'visibility', v(visibility.heatmap))
   }
 
@@ -188,12 +191,48 @@ export function createMapView(container: HTMLElement): MapView {
     for (const id of ['grid', 'zones', 'routes', 'rf-coverage', 'rf-heatmap']) {
       map.addSource(id, { type: 'geojson', data: pending[id] ?? empty() })
     }
+
+    // 3. Shaded relief (hillshade) layer: casts real sunlight and shadows on terrain features
+    map.addLayer(
+      {
+        id: 'hillshade-relief',
+        type: 'hillshade',
+        source: 'terrain-dem',
+        paint: {
+          'hillshade-exaggeration': 0.85,
+          'hillshade-shadow-color': '#090d16',
+          'hillshade-highlight-color': '#ffffff',
+          'hillshade-accent-color': '#1e293b',
+          'hillshade-illumination-direction': 315,
+          'hillshade-illumination-altitude': 45,
+        },
+      },
+      'grid-line',
+    )
+
     map.addLayer({
       id: 'grid-line',
       type: 'line',
       source: 'grid',
       paint: { 'line-color': '#868e96', 'line-width': 1, 'line-dasharray': [4, 4] },
     })
+
+    // 4. Continuous RF heatmap polygon cells: solid contiguous quads that NEVER dilute on zoom
+    map.addLayer(
+      {
+        id: 'rf-heatmap-cells',
+        type: 'fill',
+        source: 'rf-heatmap',
+        paint: {
+          'fill-color': ['coalesce', ['get', 'color'], '#20c997'],
+          'fill-opacity': ['coalesce', ['get', 'opacity'], 0.35],
+          'fill-antialias': false,
+        },
+      },
+      'rf-coverage-fill',
+    )
+
+    // 5. Point heatmap layer for smooth atmospheric blur at low zoom
     map.addLayer({
       id: 'rf-heatmap-layer',
       type: 'heatmap',
@@ -204,9 +243,10 @@ export function createMapView(container: HTMLElement): MapView {
           'interpolate',
           ['linear'],
           ['zoom'],
-          8, 0.75,
-          11, 1.0,
-          14, 1.3,
+          8, 0.65,
+          11, 0.85,
+          13, 0.40,
+          15, 0.0, // Fade out Gaussian blur at high zoom so solid polygon cells take over completely
         ],
         'heatmap-color': [
           'interpolate',
@@ -413,7 +453,7 @@ export function createMapView(container: HTMLElement): MapView {
       is3dMode = enabled
       if (!loaded) return
       if (enabled) {
-        map.setTerrain({ source: 'terrain-dem', exaggeration: 1.35 })
+        map.setTerrain({ source: 'terrain-dem', exaggeration: 2.2 })
         map.easeTo({ pitch: 62, bearing: -20, duration: 800 })
       } else {
         map.setTerrain(null)

@@ -382,6 +382,7 @@ def compute_js_heatmap_geojson(
     drone_h_agl_m: float = 20.0,
     pilot_h_agl_m: float = 2.0,
     jammer_h_agl_m: float = 10.0,
+    cells: bool = False,
 ) -> dict[str, Any]:
     """Generate a dense regular grid of J/S jamming degree points for GPU heatmap rendering.
 
@@ -411,9 +412,11 @@ def compute_js_heatmap_geojson(
     ys = np.arange(0.0, corner_y + 1e-3, step_m)
 
     grid_pts: list[Position] = []
+    xy_pts: list[tuple[float, float]] = []
     for y in ys:
         for x in xs:
             grid_pts.append(frame.to_position(x, y))
+            xy_pts.append((float(x), float(y)))
 
     if not grid_pts:
         return {"type": "FeatureCollection", "features": []}
@@ -490,24 +493,56 @@ def compute_js_heatmap_geojson(
 
         if js_val < -6.0:
             status = "SAFE"
+            color = "#20c997"
+            opacity = 0.35
         elif js_val < 0.0:
             status = "CAUTION"
+            color = "#fab005"
+            opacity = 0.55
         elif js_val < 6.0:
             status = "CONTENTION"
+            color = "#fd7e14"
+            opacity = 0.65
         else:
             status = "JAMMED"
+            color = "#e03131"
+            opacity = 0.75
+
+        if cells:
+            half = step_m / 2.0
+            cx, cy = xy_pts[i]
+            c1 = frame.to_position(cx - half, cy - half)
+            c2 = frame.to_position(cx + half, cy - half)
+            c3 = frame.to_position(cx + half, cy + half)
+            c4 = frame.to_position(cx - half, cy + half)
+            geom: dict[str, Any] = {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [round(c1.lon, 6), round(c1.lat, 6)],
+                        [round(c2.lon, 6), round(c2.lat, 6)],
+                        [round(c3.lon, 6), round(c3.lat, 6)],
+                        [round(c4.lon, 6), round(c4.lat, 6)],
+                        [round(c1.lon, 6), round(c1.lat, 6)],
+                    ]
+                ],
+            }
+        else:
+            geom = {
+                "type": "Point",
+                "coordinates": [round(p.lon, 6), round(p.lat, 6)],
+            }
 
         features.append(
             {
                 "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [p.lon, p.lat],
-                },
+                "geometry": geom,
                 "properties": {
                     "weight": round(w_val, 3),
                     "js_db": round(js_val, 1),
                     "status": status,
+                    "color": color,
+                    "opacity": opacity,
                     "p_jammer_dbm": round(pj_val, 1),
                     "p_pilot_dbm": round(ps_val, 1),
                     "elev_m": round(el_val, 0),
@@ -595,11 +630,7 @@ def probe_point_rf(
             "shielding_db": 0.0,
             "worst_jammer_id": worst_jammer_id if worst_jammer_lb else "None",
             "pilot_dist_m": round(pilot_lb.distance_m, 0),
-            "jammer_dist_m": (
-                round(worst_jammer_lb.distance_m, 0)
-                if worst_jammer_lb
-                else 0.0
-            ),
+            "jammer_dist_m": (round(worst_jammer_lb.distance_m, 0) if worst_jammer_lb else 0.0),
             "details": "Clear spectrum · Outside jammer reach (0.0 W interference)",
         }
 

@@ -218,7 +218,11 @@ def create_app(
         )
 
     @app.get("/api/rf/heatmap")
-    async def get_rf_heatmap(drone_h_agl_m: float = 20.0, step_m: float = 300.0) -> dict[str, Any]:
+    async def get_rf_heatmap(
+        drone_h_agl_m: float = 20.0,
+        step_m: float = 300.0,
+        cells: bool = False,
+    ) -> dict[str, Any]:
         """Return continuous J/S heatmap grid for GPU-accelerated heatmap rendering."""
         dem = _select_dem()
         jammers: list[tuple[str, Position, float]] = [
@@ -228,7 +232,8 @@ def create_app(
             if t.type == "jammer":
                 jammers.append((t.id, t.pos, t.eirp_w))
 
-        # Calculate expanded bounding box from scenario grid (with 15km margin to cover entire operational theater)
+        # Calculate expanded bounding box from scenario grid
+        # (with 15km margin to cover entire operational theater)
         frame = grid.frame
         sw = frame.to_position(-15000.0, -15000.0)
         ne = frame.to_position(grid.cols * grid.cell_m + 15000.0, grid.rows * grid.cell_m + 15000.0)
@@ -241,8 +246,9 @@ def create_app(
             jammers=jammers,
             band_or_freq_hz=scenario.mission.band,
             bounds=bounds,
-            step_m=max(step_m, 400.0),
+            step_m=max(step_m, 250.0),
             drone_h_agl_m=drone_h_agl_m,
+            cells=cells,
         )
 
     @app.get("/api/rf/probe")
