@@ -53,6 +53,22 @@ class RequestMission(Model):
     )
 
 
+class UpdateMission(Model):
+    """Move the launch or target of a mission still on the ground, or change its departure.
+
+    Same rights as launch: its pilot or the command post.
+    """
+
+    type: Literal["mission.update"] = "mission.update"
+    actor: str
+    mission: str
+    launch: Position
+    target: Position
+    departure_s: float = Field(
+        ge=0, description="Earliest departure; one in the past means as soon as possible."
+    )
+
+
 class LaunchMission(Model):
     """Only the mission pilot or the command post may launch."""
 
@@ -78,6 +94,13 @@ class InjectDelay(Model):
 
 
 Command = Annotated[
-    ScheduleCut | CancelCut | ConfirmCut | RequestMission | LaunchMission | SetClock | InjectDelay,
+    ScheduleCut
+    | CancelCut
+    | ConfirmCut
+    | RequestMission
+    | UpdateMission
+    | LaunchMission
+    | SetClock
+    | InjectDelay,
     Field(discriminator="type"),
 ]

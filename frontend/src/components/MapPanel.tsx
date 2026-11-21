@@ -1,5 +1,6 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
 import { ActionIcon, Button, Tooltip } from '@mantine/core'
+import { send } from '../api/client'
 import { friendlyZoneState, positionAt } from '../domain/view'
 import { useViewTime } from '../hooks/useSimNow'
 import { COLORS, createMapView, ROUTE_COLORS, type DroneMark, type MapView } from '../map/mapView'
@@ -32,6 +33,19 @@ export function MapPanel() {
   const scrubbing = useStore((s) => s.viewTimeS !== null)
   const t = useViewTime()
   const list = useMemo(() => Object.values(missions), [missions])
+  const callsign = useStore((s) => s.callsign)
+  // Missions this viewer may move, as a string: plan and drone events must not redraw the
+  // markers (a drag in progress would be lost), only a status or ownership change.
+  const movableKey = list
+    .filter((m) => m.status === 'planned')
+    .map((m) => m.constraints.mission)
+    .filter((id) => {
+      const scenario = snapshot?.scenario
+      const pilot = scenario?.missions.find((x) => x.id === id)?.pilot_callsign
+      return callsign === pilot || callsign === scenario?.command_callsign
+    })
+    .join(',')
+  const movable = useMemo(() => (movableKey ? movableKey.split(',') : []), [movableKey])
   const selectedView = useSelectedMission()
   const drone = selectedView?.drone ?? null
 
@@ -49,6 +63,18 @@ export function MapPanel() {
     if (!container.current) return
     view.current = createMapView(container.current)
     view.current.onClick((pos) => useStore.getState().pickPoint(pos))
+    view.current.onMove(({ mission, point, pos }) => {
+      const state = useStore.getState()
+      if (mission === null) {
+        state.setRequestDraft({ [point]: pos })
+        return
+      }
+      const m = state.snapshot?.scenario.missions.find((x) => x.id === mission)
+      if (!m) return
+      // Dropped on the map: the mission moves at once, departure kept. The server replans it.
+      const points = { launch: m.launch, target: m.target, [point]: pos }
+      send({ type: 'mission.update', mission, ...points, departure_s: m.departure_s })
+    })
     return () => {
       view.current?.destroy()
       view.current = null
@@ -67,8 +93,9 @@ export function MapPanel() {
       missionGrid: mission?.grid ?? null,
       missionZones: mission?.zones ?? [],
       nominalZones: snapshot.nominal_zones,
+      movable,
     })
-  }, [snapshot, selected])
+  }, [snapshot, selected, movable])
 
   useEffect(() => {
     view.current?.setLayerVisibility({
@@ -181,9 +208,25 @@ export function MapPanel() {
     view.current?.setRequest({ launch: draft.launch, target: draft.target, picking: draft.picking !== null })
   }, [draft])
 
+  // Escape stops picking a point, leaving the form unchanged.
+  useEffect(() => {
+    if (!draft.picking) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') useStore.getState().setRequestDraft({ picking: null })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [draft.picking])
+
   return (
     <div className="map-wrap">
       <div ref={container} className="map" />
+
+      {draft.picking && (
+        <div className="map-pick-banner">
+          Click on the map to set the {draft.picking === 'launch' ? 'launch point' : 'target'} · Esc to cancel
+        </div>
+      )}
 
       {/* Floating Tactical Inspector Probe */}
       {probe && <TacticalInspectorProbe probe={probe} />}

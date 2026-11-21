@@ -40,6 +40,15 @@ class MissionCreated(Model):
     mission: Mission
 
 
+class MissionUpdated(Model):
+    """A mission on the ground got new points or a new departure; its plan is dropped and a
+    new one requested. Every client gets a new snapshot right after: the mission may enter or
+    leave its view."""
+
+    type: Literal["mission.updated"] = "mission.updated"
+    mission: Mission
+
+
 class MissionStatusChanged(Model):
     type: Literal["mission.status"] = "mission.status"
     mission: str
@@ -122,6 +131,7 @@ Event = Annotated[
     | CutConfirmed
     | ClockChanged
     | MissionCreated
+    | MissionUpdated
     | MissionStatusChanged
     | Notification
     | PlanUpdated

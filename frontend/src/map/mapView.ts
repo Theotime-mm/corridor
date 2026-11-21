@@ -74,6 +74,15 @@ export interface Scene {
   missionZones: Zone[]
   /** Mission-independent footprints (command and operator views). */
   nominalZones: Zone[]
+  /** Missions whose launch and target can be dragged (on the ground, this viewer may change). */
+  movable: string[]
+}
+
+/** A launch or target dropped somewhere else: of a mission, or of the form (`mission` null). */
+export interface PointMove {
+  mission: string | null
+  point: 'launch' | 'target'
+  pos: Position
 }
 
 export interface MissionRoutes {
@@ -102,6 +111,7 @@ export interface MapView {
   /** Points of the mission request being filled in. */
   setRequest(points: RequestPoints): void
   onClick(handler: (pos: Position) => void): void
+  onMove(handler: (move: PointMove) => void): void
   setZoneStates(states: Record<string, ZoneState>): void
   setRoutes(routes: MissionRoutes[]): void
   setDrones(drones: DroneMark[]): void
@@ -142,6 +152,18 @@ export function createMapView(container: HTMLElement): MapView {
   const drones = new Map<string, maplibregl.Marker>()
   const requestMarkers: maplibregl.Marker[] = []
   let clickHandler: ((pos: Position) => void) | null = null
+  let moveHandler: ((move: PointMove) => void) | null = null
+  /** Label marker, draggable when `move` says what it is. */
+  const point = (pos: Position, text: string, color: string, move?: Omit<PointMove, 'pos'>) => {
+    const marker = label(map, pos, text, color, move !== undefined)
+    if (move) {
+      marker.on('dragend', () => {
+        const { lat, lng } = marker.getLngLat()
+        moveHandler?.({ ...move, pos: { lat, lon: lng } })
+      })
+    }
+    return marker
+  }
   map.on('click', (e) => clickHandler?.({ lat: e.lngLat.lat, lon: e.lngLat.lng }))
 
   const setData = (source: string, data: FC) => {
@@ -364,9 +386,10 @@ export function createMapView(container: HTMLElement): MapView {
         }),
       })
       renderZones()
-      // Fit once per set of grids, not on every mission selection.
+      // Fit once per set of missions: not on every selection, nor when a mission's points move
+      // (the map would jump under the pointer). The fit button refits on demand.
       const box = boundsOf(grids)
-      const key = JSON.stringify(box)
+      const key = scenario.missions.map((m) => m.id).join(',')
       if (box && key !== fitted) {
         fitted = key
         map.fitBounds(box, { padding: 30, duration: 0 })
@@ -374,20 +397,24 @@ export function createMapView(container: HTMLElement): MapView {
 
       markers.splice(0).forEach((m) => m.remove())
       for (const m of scenario.missions) {
-        markers.push(label(map, m.launch, `${m.pilot_callsign} (${m.id})`, '#4dabf7'))
-        markers.push(label(map, m.target, `TARGET ${m.id}`, '#ffd43b'))
+        const movable = scene.movable.includes(m.id)
+        markers.push(point(m.launch, `${m.pilot_callsign} (${m.id})`, '#4dabf7', movable ? { mission: m.id, point: 'launch' } : undefined))
+        markers.push(point(m.target, `TARGET ${m.id}`, '#ffd43b', movable ? { mission: m.id, point: 'target' } : undefined))
       }
       for (const j of scenario.friendly_jammers) markers.push(label(map, j.pos, `${j.id} · ${j.operator_callsign}`, COLORS.friendlyOn))
       for (const t of scenario.enemy_threats) markers.push(label(map, t.pos, t.id, t.type === 'radar' ? COLORS.radar : COLORS.enemy))
     },
     setRequest({ launch, target, picking }) {
       requestMarkers.splice(0).forEach((m) => m.remove())
-      if (launch) requestMarkers.push(label(map, launch, 'NEW LAUNCH', '#4dabf7'))
-      if (target) requestMarkers.push(label(map, target, 'NEW TARGET', '#ffd43b'))
+      if (launch) requestMarkers.push(point(launch, 'NEW LAUNCH', '#4dabf7', { mission: null, point: 'launch' }))
+      if (target) requestMarkers.push(point(target, 'NEW TARGET', '#ffd43b', { mission: null, point: 'target' }))
       map.getCanvas().style.cursor = picking ? 'crosshair' : ''
     },
     onClick(handler) {
       clickHandler = handler
+    },
+    onMove(handler) {
+      moveHandler = handler
     },
     setZoneStates(s) {
       states = s
@@ -498,15 +525,18 @@ function zoneStyle(z: Zone, state: ZoneState): { color: string; opacity: number 
   return { color: COLORS.friendlyOn, opacity: 0.22 }
 }
 
-/** HTML marker with a dot and a text label (no glyph server needed, works offline). */
-function label(map: MlMap, pos: Position, text: string, color: string): maplibregl.Marker {
+/** HTML marker with a dot and a text label (no glyph server needed, works offline).
+ *
+ * The marker element is the dot alone, anchored on its centre, so the position is exactly under
+ * it and a drag grabs the point itself. The text hangs to the right and never takes the mouse. */
+function label(map: MlMap, pos: Position, text: string, color: string, draggable = false): maplibregl.Marker {
   const el = document.createElement('div')
-  el.className = 'map-label'
-  const dot = document.createElement('span')
-  dot.className = 'map-label-dot'
-  dot.style.background = color
+  el.className = draggable ? 'map-label-dot map-label-draggable' : 'map-label-dot'
+  el.style.background = color
+  if (draggable) el.title = 'Drag to move'
   const span = document.createElement('span')
+  span.className = 'map-label-text'
   span.textContent = text
-  el.append(dot, span)
-  return new maplibregl.Marker({ element: el, anchor: 'left', offset: [-6, 0] }).setLngLat([pos.lon, pos.lat]).addTo(map)
+  el.append(span)
+  return new maplibregl.Marker({ element: el, anchor: 'center', draggable }).setLngLat([pos.lon, pos.lat]).addTo(map)
 }

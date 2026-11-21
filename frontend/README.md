@@ -25,7 +25,7 @@ src/
   domain/view.ts       pure helpers: zone state at an instant, drone position on a route, grid bounds
   map/mapView.ts       all MapLibre code, framework-free (setScene, setZoneStates, setRoutes, setDrones)
   hooks/useSimNow.ts   live sim time (extrapolated between server messages), view time
-  components/          SignIn, TopBar, MapPanel, RequestMissionCard, MissionsCard, MissionCard, CutsCard, FeedCard,
+  components/          SignIn, TopBar, MapPanel, NewMissionCard, MissionsCard, MissionCard, CutsCard, FeedCard,
                        TimelinePanel
   dev/mockPlan.ts      DEV ONLY: fake plan.updated until the planner emits real ones
 ```
@@ -46,9 +46,17 @@ src/
   when its jammer concerns it), `cut.confirm` (only enabled for the jammer's operator),
   `cut.cancel`, `mission.launch` (shown to the mission pilot and the command). Server errors show
   as an alert.
-- Pilot: "Request a mission" card. Pick launch and target on the map (crosshair, then the
-  target right after the launch), set the departure delay, send `mission.request`. The new
-  mission arrives with a fresh snapshot and gets selected.
+- Pilot: "New mission" button in the top bar opens a form at the top of the sidebar, already
+  picking the launch on the map, then the target (a banner says what to click, Esc cancels; the
+  launch falls back to the selected mission's). Both points can also be typed or pasted as
+  "lat, lon", or picked again with the crosshair button. Departure: ASAP, in 5 or 15 min, or at a
+  UTC time. A straight-line estimate (distance, time, battery) warns when the target is out of
+  range. The new mission arrives with a fresh snapshot, gets selected, and the form closes.
+- "Change points" on a mission still on the ground (its pilot or the command) opens the same
+  form with its points and "Keep" as departure; it sends `mission.update`.
+- Map: the launch and target of a mission still on the ground (its pilot or the command) can be
+  dragged; dropping one sends `mission.update` at once, departure kept. The form's points can be
+  dragged too.
 - Notification feed with the confirm button from `notification.action`.
 - Timeline: cuts per jammer in view, one row per drone in view with its route segments (`ground` / `fly` / `hover`), orange cursor on
   live time. Drag the cursor to scrub: map and zones follow; "Back to live" resets.

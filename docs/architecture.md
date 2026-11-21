@@ -417,6 +417,7 @@ Rules enforced today:
 | `cut.confirm` | unknown cut, already confirmed, actor is not the jammer operator |
 | `cut.cancel` | unknown cut |
 | `mission.request` | actor is not a pilot |
+| `mission.update` | unknown mission, mission not in `planned`, actor is neither its pilot nor the command |
 | `mission.launch` | unknown mission, mission not in `planned`, actor is neither its pilot nor the command |
 | `inject.delay` | unknown mission, no drone in flight |
 | any | `actor` is not the callsign the connection gave (WebSocket adapter) |
@@ -431,7 +432,9 @@ Rules enforced today:
   count per mission.
 - Missions: a pilot's `mission.request` builds a mission from its drone, computes its
   constraints on the spot (same grid rules as at startup), adds it to `scenario.missions` and
-  requests its first plan.
+  requests its first plan. `mission.update` moves the launch and target (and departure) of a
+  mission still `planned`: same constraints rebuilt in place, plan dropped, new plan requested
+  with the next revision, so a plan still on its way for the old points is dropped.
 - Plans: at startup for every mission, and after every `cut.schedule`, `cut.confirm` or
   `cut.cancel` for the missions the cut's jammer concerns, while they are `planned`, the engine
   requests a plan with the next revision of that mission. The planner only gets the cuts of the
@@ -625,7 +628,8 @@ Server to client:
 - A reconnect gets a fresh `snapshot`, so no client-side resync logic is needed.
 - `mission.created` is followed, for every client that sees the mission, by a fresh `snapshot`:
   the mission may bring jammers, threats and cuts into its view. The client just replaces its
-  state, as on connect.
+  state, as on connect. `mission.updated` is followed by a fresh `snapshot` for every client:
+  the mission may also leave a view (an operator whose jammer it no longer crosses).
 
 **`plan.updated`**
 
@@ -655,6 +659,7 @@ Server to client:
 | `clock` | done | sim time, factor, paused; on change only |
 | `cut.scheduled`, `cut.confirmed`, `cut.cancelled` | done | the cut (`requested_for`: the mission it was asked for, if any) |
 | `mission.created` | done | the full mission (drone fields from the pilot); a new `snapshot` follows, then a notification to the pilot and the first `plan.updated` |
+| `mission.updated` | done | the mission with its new points and departure; a new `snapshot` follows for every client (plan back to null until the next `plan.updated`) |
 | `mission.status` | done | mission id; `planned`, `flying`, `arrived` |
 | `notification` | done | `to` (callsign), text, optional action (the button to show and the cut it confirms) |
 | `ack`, `error` | done | `req_id`, reason on error |
@@ -670,6 +675,7 @@ Server to client:
 | `cut.cancel` | done | cut id |
 | `cut.confirm` | done | cut id |
 | `mission.request` | done | `launch`, `target`, `departure_s` (a past one means as soon as possible); the mission id is `M<n>`, the first one free |
+| `mission.update` | done | mission id, `launch`, `target`, `departure_s`; only while `planned` |
 | `mission.launch` | done | mission id |
 | `clock.set` | done | factor and/or paused |
 | `inject.delay` | done | mission id, `delay_s`: hold the flying drone where it is (demo twist) |

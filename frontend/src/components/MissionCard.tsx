@@ -107,6 +107,15 @@ export function MissionCard() {
             Launch mission
           </Button>
         )}
+        {canLaunch && status === 'planned' && (
+          <Button
+            size="xs"
+            variant="light"
+            onClick={() => useStore.getState().openEdit(m.id, m.launch, m.target)}
+          >
+            Change points
+          </Button>
+        )}
         {status === 'flying' && (
           <Button
             size="xs"
