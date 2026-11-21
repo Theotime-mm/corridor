@@ -36,6 +36,94 @@
       "title": "Ack",
       "type": "object"
     },
+    "AddThreat": {
+      "additionalProperties": false,
+      "description": "The command reports an enemy threat or a zone to avoid; the server gives it an id.\n\nA radar and a zone to avoid take ``radius_m``, an enemy jammer ``eirp_w`` and ``bands``.",
+      "properties": {
+        "type": {
+          "const": "threat.add",
+          "default": "threat.add",
+          "title": "Type",
+          "type": "string"
+        },
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "radar",
+            "jammer",
+            "avoid"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "pos": {
+          "$ref": "#/$defs/Position"
+        },
+        "radius_m": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Radar range or radius of the zone to avoid, metres.",
+          "title": "Radius M"
+        },
+        "eirp_w": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Jammer EIRP, watts.",
+          "title": "Eirp W"
+        },
+        "bands": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Jammer bands.",
+          "title": "Bands"
+        },
+        "position_error_m": {
+          "default": 0,
+          "description": "Uncertainty on `pos`, metres (radar and jammer).",
+          "minimum": 0,
+          "title": "Position Error M",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "actor",
+        "kind",
+        "pos"
+      ],
+      "title": "AddThreat",
+      "type": "object"
+    },
     "Antenna": {
       "additionalProperties": false,
       "description": "Directional antenna, seen from above: a main beam with a hard edge, sidelobes elsewhere.\n\nThe cone is horizontal only: the planner is 2D plus time.",
@@ -67,6 +155,38 @@
         "sidelobe_db"
       ],
       "title": "Antenna",
+      "type": "object"
+    },
+    "AvoidZone": {
+      "additionalProperties": false,
+      "description": "Area the command advises against (reported activity, no located emitter).\n\nShown with the threats and in each mission's zones, but not forbidden: the planner may cross\nit. Making routes avoid it when there is a reasonable alternative is still to do.",
+      "properties": {
+        "type": {
+          "const": "avoid",
+          "default": "avoid",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "pos": {
+          "$ref": "#/$defs/Position"
+        },
+        "radius_m": {
+          "exclusiveMinimum": 0,
+          "title": "Radius M",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "pos",
+        "radius_m"
+      ],
+      "title": "AvoidZone",
       "type": "object"
     },
     "CancelCut": {
@@ -111,7 +231,9 @@
               "cut.schedule": "#/$defs/ScheduleCut",
               "inject.delay": "#/$defs/InjectDelay",
               "mission.launch": "#/$defs/LaunchMission",
-              "mission.request": "#/$defs/RequestMission"
+              "mission.request": "#/$defs/RequestMission",
+              "threat.add": "#/$defs/AddThreat",
+              "threat.remove": "#/$defs/RemoveThreat"
             },
             "propertyName": "type"
           },
@@ -136,6 +258,12 @@
             },
             {
               "$ref": "#/$defs/InjectDelay"
+            },
+            {
+              "$ref": "#/$defs/AddThreat"
+            },
+            {
+              "$ref": "#/$defs/RemoveThreat"
             }
           ],
           "title": "Command"
@@ -1185,6 +1313,33 @@
       "title": "ReferenceLink",
       "type": "object"
     },
+    "RemoveThreat": {
+      "additionalProperties": false,
+      "description": "The command removes an enemy threat or a zone to avoid, from the file or added.",
+      "properties": {
+        "type": {
+          "const": "threat.remove",
+          "default": "threat.remove",
+          "title": "Type",
+          "type": "string"
+        },
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "threat": {
+          "title": "Threat",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "actor",
+        "threat"
+      ],
+      "title": "RemoveThreat",
+      "type": "object"
+    },
     "RequestMission": {
       "additionalProperties": false,
       "description": "A pilot asks for a route: a new mission with its drone, planned right away.",
@@ -1291,6 +1446,7 @@
           "items": {
             "discriminator": {
               "mapping": {
+                "avoid": "#/$defs/AvoidZone",
                 "jammer": "#/$defs/EnemyJammer",
                 "radar": "#/$defs/EnemyRadar"
               },
@@ -1302,6 +1458,9 @@
               },
               {
                 "$ref": "#/$defs/EnemyJammer"
+              },
+              {
+                "$ref": "#/$defs/AvoidZone"
               }
             ]
           },
@@ -1413,7 +1572,9 @@
                   "mission.created": "#/$defs/MissionCreated",
                   "mission.status": "#/$defs/MissionStatusChanged",
                   "notification": "#/$defs/Notification",
-                  "plan.updated": "#/$defs/PlanUpdated"
+                  "plan.updated": "#/$defs/PlanUpdated",
+                  "threat.added": "#/$defs/ThreatAdded",
+                  "threat.removed": "#/$defs/ThreatRemoved"
                 },
                 "propertyName": "type"
               },
@@ -1432,6 +1593,12 @@
                 },
                 {
                   "$ref": "#/$defs/MissionCreated"
+                },
+                {
+                  "$ref": "#/$defs/ThreatAdded"
+                },
+                {
+                  "$ref": "#/$defs/ThreatRemoved"
                 },
                 {
                   "$ref": "#/$defs/MissionStatusChanged"
@@ -1585,6 +1752,86 @@
       "title": "Snapshot",
       "type": "object"
     },
+    "ThreatAdded": {
+      "additionalProperties": false,
+      "description": "The command added an enemy threat or a zone to avoid. Clients that see it get a new\nsnapshot right after: zones, grids and scopes may all have changed.",
+      "properties": {
+        "type": {
+          "const": "threat.added",
+          "default": "threat.added",
+          "title": "Type",
+          "type": "string"
+        },
+        "threat": {
+          "discriminator": {
+            "mapping": {
+              "avoid": "#/$defs/AvoidZone",
+              "jammer": "#/$defs/EnemyJammer",
+              "radar": "#/$defs/EnemyRadar"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/EnemyRadar"
+            },
+            {
+              "$ref": "#/$defs/EnemyJammer"
+            },
+            {
+              "$ref": "#/$defs/AvoidZone"
+            }
+          ],
+          "title": "Threat"
+        },
+        "missions": {
+          "description": "Missions it concerns.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Missions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "threat",
+        "missions"
+      ],
+      "title": "ThreatAdded",
+      "type": "object"
+    },
+    "ThreatRemoved": {
+      "additionalProperties": false,
+      "description": "The command removed a threat. Clients that see it get a new snapshot right after.",
+      "properties": {
+        "type": {
+          "const": "threat.removed",
+          "default": "threat.removed",
+          "title": "Type",
+          "type": "string"
+        },
+        "threat": {
+          "title": "Threat",
+          "type": "string"
+        },
+        "missions": {
+          "description": "Missions it concerned.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Missions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "threat",
+        "missions"
+      ],
+      "title": "ThreatRemoved",
+      "type": "object"
+    },
     "Viewer": {
       "additionalProperties": false,
       "description": "Who is connected: the callsign the client gave, and its role in the scenario.",
@@ -1622,7 +1869,8 @@
           "enum": [
             "friendly_jammer",
             "enemy_jammer",
-            "radar"
+            "radar",
+            "avoid"
           ],
           "title": "Kind",
           "type": "string"

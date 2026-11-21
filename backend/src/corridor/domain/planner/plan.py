@@ -13,7 +13,7 @@ from corridor.domain.planner.astar import Step, earliest_path
 from corridor.domain.planner.masks import TimedMasks, timed_masks
 from corridor.domain.scenario import Mission, Scenario
 from corridor.domain.state import Cut
-from corridor.domain.zones import ThreatShape, mission_shapes
+from corridor.domain.zones import ThreatShape, forbidden_shapes
 
 ENTRY_MARGIN_S = 30.0
 """Enter a friendly zone no sooner than this after its cut starts."""
@@ -92,7 +92,7 @@ def plan_route(
     if start is None or goal is None:
         return None
     windows = [w for w in (_usable(c) for c in cuts) if w is not None]
-    zones = mission_shapes(scenario, mission)
+    zones = forbidden_shapes(scenario, mission)
     latest = max([mission.departure_s, *(w.end_s for w in windows)])
     timed = timed_masks(
         grid,
@@ -144,7 +144,7 @@ def plan_fallback(
         return None
     timed = timed_masks(
         grid,
-        mission_shapes(scenario, mission),
+        forbidden_shapes(scenario, mission),
         LocalFrame(mission.launch),
         [],
         now_s,

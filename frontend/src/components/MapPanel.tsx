@@ -344,6 +344,7 @@ const LEGEND: { label: string; color: string; kind: 'area' | 'line' | 'dash' }[]
   { label: 'Cut confirmed (passable)', color: COLORS.friendlyCut, kind: 'area' },
   { label: 'Enemy jammer', color: COLORS.enemy, kind: 'area' },
   { label: 'Radar', color: COLORS.radar, kind: 'area' },
+  { label: 'Zone to avoid (not enforced yet)', color: COLORS.avoid, kind: 'area' },
   { label: 'Detour (all jammers on)', color: COLORS.baseline, kind: 'dash' },
   { label: 'Planned route', color: ROUTE_COLORS.approved, kind: 'line' },
   { label: 'Route awaiting confirmation', color: ROUTE_COLORS.preview, kind: 'line' },
