@@ -4,8 +4,9 @@ import type { ReactNode } from 'react'
 import { friendlyZoneState, missionOf } from '../../domain/view'
 import { useLiveSimTime } from '../../hooks/useSimNow'
 import { useStore } from '../../store'
-import { PLAN_COLOR, STATUS_COLOR } from '../colors'
+import { PLAN_COLOR, STATUS_COLOR, THREAT_COLOR } from '../colors'
 import { SectionTitle } from './parts'
+import { threatSummary } from './threat'
 
 const ZONE_BADGE = {
   on: { color: 'red', label: 'on' },
@@ -109,12 +110,9 @@ function ObjectList() {
         <Row key={t.id} onClick={() => open('threat', t.id)}>
           <div>
             <Text size="sm" fw={600}>{t.id}</Text>
-            <Text size="xs" c="dimmed">
-              {t.type === 'radar' ? `range ${(t.radius_m / 1000).toFixed(1)} km` : `${t.bands.join(', ')} · ${t.eirp_w} W`}
-              {` · ±${t.position_error_m} m`}
-            </Text>
+            <Text size="xs" c="dimmed">{threatSummary(t)}</Text>
           </div>
-          <Badge size="sm" color={t.type === 'radar' ? 'orange' : 'grape'} variant="light">{t.type}</Badge>
+          <Badge size="sm" color={THREAT_COLOR[t.type]} variant="light">{t.type}</Badge>
         </Row>
       ))}
     </Stack>

@@ -195,8 +195,8 @@ describe('missionSpan', () => {
 
   it('spans the planned route', () => {
     const route: RoutePoint[] = [
-      { lat: 48.0, lon: 11.0, t: 650, action: 'ground' },
-      { lat: 48.1, lon: 11.0, t: 1400, action: 'hover' },
+      { lat: 48.0, lon: 11.0, alt_m: 0, t: 650, action: 'ground' },
+      { lat: 48.1, lon: 11.0, alt_m: 120, t: 1400, action: 'hover' },
     ]
     expect(missionSpan(mission, route)).toEqual([650, 1400])
   })
