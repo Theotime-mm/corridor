@@ -1,7 +1,7 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
 import { ActionIcon, Button, Tooltip } from '@mantine/core'
 import { send } from '../api/client'
-import { friendlyZoneState, positionAt } from '../domain/view'
+import { focusPoints, friendlyZoneState, positionAt } from '../domain/view'
 import { useViewTime } from '../hooks/useSimNow'
 import { COLORS, createMapView, ROUTE_COLORS, type DroneMark, type MapView } from '../map/mapView'
 import { useSelectedMission, useStore } from '../store'
@@ -207,6 +207,17 @@ export function MapPanel() {
   useEffect(() => {
     view.current?.setRequest({ launch: draft.launch, target: draft.target, picking: draft.picking !== null })
   }, [draft])
+
+  // A click in the sidebar frames the mission or object. Read once per click: later snapshots
+  // or plans must not move the map.
+  const focus = useStore((s) => s.focus)
+  useEffect(() => {
+    if (!focus) return
+    const state = useStore.getState()
+    if (!state.snapshot) return
+    const route = focus.kind === 'mission' ? state.missions[focus.id]?.plan?.optimised_route : undefined
+    view.current?.frame(focusPoints(state.snapshot.scenario, focus.kind, focus.id, route))
+  }, [focus])
 
   // Escape stops picking a point, leaving the form unchanged.
   useEffect(() => {

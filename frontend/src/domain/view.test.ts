@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Cut, Grid, Position, RoutePoint, Zone } from '../api/protocol'
+import type { Cut, Grid, Mission, Position, RoutePoint, Zone } from '../api/protocol'
 import {
   bearingDeg,
   clockLabel,
@@ -8,6 +8,7 @@ import {
   friendlyZoneState,
   gridBounds,
   inForbidden,
+  missionSpan,
   nextClockTime,
   parsePosition,
   positionAt,
@@ -186,5 +187,21 @@ describe('mission request helpers', () => {
     expect(nextClockTime(start, 600, '9:00')).toBe(19 * 3600)
     expect(nextClockTime(start, 600, '25:00')).toBeNull()
     expect(nextClockTime(start, 600, 'soon')).toBeNull()
+  })
+})
+
+describe('missionSpan', () => {
+  const mission = { departure_s: 600, battery_max_s: 1800 } as Mission
+
+  it('spans the planned route', () => {
+    const route: RoutePoint[] = [
+      { lat: 48.0, lon: 11.0, t: 650, action: 'ground' },
+      { lat: 48.1, lon: 11.0, t: 1400, action: 'hover' },
+    ]
+    expect(missionSpan(mission, route)).toEqual([650, 1400])
+  })
+
+  it('falls back to departure plus full battery without a plan', () => {
+    expect(missionSpan(mission)).toEqual([600, 2400])
   })
 })
