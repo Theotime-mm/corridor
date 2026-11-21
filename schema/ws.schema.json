@@ -675,7 +675,7 @@
     },
     "PlanUpdated": {
       "additionalProperties": false,
-      "description": "Planner output. Not emitted yet: the planner is not wired in.\n\nDefined now so the front end can code against its shape.",
+      "description": "Planner output, after every change to the cuts while the mission is planned.",
       "properties": {
         "type": {
           "const": "plan.updated",
@@ -1069,6 +1069,17 @@
           ],
           "title": "Mission Status",
           "type": "string"
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanUpdated"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Latest plan; None until the first one."
         }
       },
       "required": [
@@ -1078,7 +1089,8 @@
         "zones",
         "clock",
         "cuts",
-        "mission_status"
+        "mission_status",
+        "plan"
       ],
       "title": "Snapshot",
       "type": "object"

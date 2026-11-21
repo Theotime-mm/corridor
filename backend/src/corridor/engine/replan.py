@@ -1,0 +1,76 @@
+"""Plans run off the event loop, in a process pool.
+
+A pure Python plan takes up to a couple of seconds; on the event loop it would freeze every
+WebSocket client, and in a thread it would hold the GIL (Python's global interpreter lock).
+The result comes back on the event loop thread, where the engine checks its revision.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import multiprocessing
+from collections.abc import Callable
+from concurrent.futures import Future, ProcessPoolExecutor
+from typing import Protocol
+
+from corridor.domain.geo import Grid
+from corridor.domain.planner.plan import MissionPlan, plan_mission
+from corridor.domain.scenario import Scenario
+from corridor.domain.state import Cut
+
+log = logging.getLogger(__name__)
+
+PlanDone = Callable[[int, MissionPlan | None], None]
+"""Called with the revision and the plan (None: no route), on the event loop thread."""
+
+
+class Replanner(Protocol):
+    def request(
+        self, revision: int, cuts: list[Cut], earliest_departure_s: float, done: PlanDone
+    ) -> None: ...
+
+    def close(self) -> None: ...
+
+
+class ProcessReplanner:
+    """One worker process: plans run one at a time, a pending one is dropped for a newer one.
+
+    The worker is spawned, not forked: a forked worker would inherit the server's signal
+    handlers, ignore SIGTERM and outlive the server.
+    """
+
+    def __init__(self, scenario: Scenario, grid: Grid) -> None:
+        self._scenario = scenario
+        self._grid = grid
+        self._pool = ProcessPoolExecutor(
+            max_workers=1, mp_context=multiprocessing.get_context("spawn")
+        )
+        self._pending: Future[MissionPlan | None] | None = None
+
+    def request(
+        self, revision: int, cuts: list[Cut], earliest_departure_s: float, done: PlanDone
+    ) -> None:
+        loop = asyncio.get_running_loop()
+        if self._pending is not None:
+            self._pending.cancel()  # only succeeds if it has not started: its result is stale
+        future = self._pool.submit(
+            plan_mission, self._scenario, self._grid, cuts, earliest_departure_s
+        )
+        self._pending = future
+
+        def finished(future: Future[MissionPlan | None]) -> None:
+            if future.cancelled():
+                return
+            try:
+                plan = future.result()
+            except Exception:
+                log.exception("plan revision %d failed", revision)
+                return
+            loop.call_soon_threadsafe(done, revision, plan)
+
+        future.add_done_callback(finished)
+
+    def close(self) -> None:
+        """Drop pending plans, wait for the running one (a couple of seconds at most)."""
+        self._pool.shutdown(wait=True, cancel_futures=True)

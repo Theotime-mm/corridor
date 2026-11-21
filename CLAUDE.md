@@ -31,12 +31,12 @@ Functional spec (users, inputs, behaviour, safety rules, demo story): `docs/feat
 - Backend: FastAPI. Commands and state both go over one WebSocket; contract in
   `schema/ws.schema.json`, protocol in `docs/architecture.md`.
 - Scenario format and J/S jamming model (free space, circles of Apollonius): see
-  `docs/architecture.md`. Planner design (A* over cell and time): same document, not
-  implemented yet.
+  `docs/architecture.md`.
 
 ## Still open (do not decide these in code without the team)
 
-- Planner implementation details beyond `docs/architecture.md`.
+- Planner choices: implemented, pending team validation. See "Open decisions" in
+  `docs/architecture.md`.
 - Demo scenario tuning (current one: `backend/scenarios/demo.json`).
 - Pitch content.
 

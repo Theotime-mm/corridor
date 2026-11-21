@@ -74,10 +74,7 @@ class PlanMetrics(Model):
 
 
 class PlanUpdated(Model):
-    """Planner output. Not emitted yet: the planner is not wired in.
-
-    Defined now so the front end can code against its shape.
-    """
+    """Planner output, after every change to the cuts while the mission is planned."""
 
     type: Literal["plan.updated"] = "plan.updated"
     revision: int

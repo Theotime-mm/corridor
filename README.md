@@ -37,7 +37,9 @@ Core architecture, module layout and WebSocket protocol: [docs/architecture.md](
 
 Status:
 - Core skeleton: scenario loading, J/S jammer zones, cut scheduling and confirmation, mission,
-  accelerated clock, WebSocket server and its JSON Schema. Planner (masks, 4D A*) not started.
+  accelerated clock, WebSocket server and its JSON Schema. Planner (masks, SIPP, takeoff sweep,
+  statuses and metrics) running in a worker process and emitting `plan.updated`. Safety rules
+  (checkpoints, in-flight fallback) not started.
 - TAK side: OTS stack, CoT client and demo shapes (sections below). Not wired to the core yet.
 - Front end: not started.
 
