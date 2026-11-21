@@ -206,17 +206,16 @@ export function TimelinePanel() {
   )
 }
 
-function TimelineChip({
-  color,
-  borderColor,
-  label,
-  dashed,
-}: {
-  color: string
-  borderColor?: string
-  label: string
-  dashed?: boolean
-}) {
+interface TimelineChipProps {
+  readonly color: string
+  readonly borderColor?: string
+  readonly label: string
+  readonly dashed?: boolean
+}
+
+function TimelineChip({ color, borderColor, label, dashed }: TimelineChipProps) {
+  const borderStyle = dashed ? 'dashed' : 'solid'
+  const border = borderColor ? `1px ${borderStyle} ${borderColor}` : undefined
   return (
     <Group gap={4} wrap="nowrap">
       <span
@@ -225,7 +224,7 @@ function TimelineChip({
           height: 8,
           borderRadius: 2,
           background: color,
-          border: borderColor ? `1px ${dashed ? 'dashed' : 'solid'} ${borderColor}` : undefined,
+          border,
           display: 'inline-block',
           flexShrink: 0,
         }}

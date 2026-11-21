@@ -218,10 +218,17 @@ html, body, #root { height: 100%; margin: 0; }
   text-transform: uppercase;
 }
 
-.tactical-badge-safe { background: rgba(32, 201, 151, 0.2); color: #20c997; border: 1px solid #20c997; }
-.tactical-badge-caution { background: rgba(250, 176, 5, 0.2); color: #fab005; border: 1px solid #fab005; }
-.tactical-badge-contention { background: rgba(253, 126, 20, 0.2); color: #fd7e14; border: 1px solid #fd7e14; }
-.tactical-badge-jammed { background: rgba(224, 49, 49, 0.2); color: #ff6b6b; border: 1px solid #ff6b6b; }
+.tactical-badge-safe { background: rgba(32, 201, 151, 0.25); color: #38d9a9; border: 1px solid #38d9a9; }
+.tactical-badge-caution { background: rgba(250, 176, 5, 0.25); color: #ffe066; border: 1px solid #ffe066; }
+.tactical-badge-contention { background: rgba(253, 126, 20, 0.25); color: #ff922b; border: 1px solid #ff922b; }
+.tactical-badge-jammed { background: rgba(224, 49, 49, 0.25); color: #ff8787; border: 1px solid #ff8787; }
+
+@media (prefers-reduced-motion: reduce) {
+  .drone-marker.drone-live .drone-pulse,
+  .tactical-inspector {
+    animation: none;
+  }
+}
 
 .tactical-grid {
   display: grid;

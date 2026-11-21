@@ -184,23 +184,7 @@ export function MapPanel() {
       <div ref={container} className="map" />
 
       {/* Floating Tactical Inspector Probe */}
-      {probe && (
-        <div className="tactical-inspector">
-          <div className="tactical-inspector-header">
-            <span className="tactical-inspector-title">TACTICAL PROBE</span>
-            <span className={`tactical-badge tactical-badge-${probe.status.toLowerCase()}`}>
-              {probe.status}: {probe.js_db >= 0 ? `+${probe.js_db}` : probe.js_db} dB J/S
-            </span>
-          </div>
-          <div className="tactical-grid">
-            <div className="tactical-row"><span className="tactical-label">Pilot (S):</span> <span className="tactical-val">{probe.p_pilot_dbm} dBm</span></div>
-            <div className="tactical-row"><span className="tactical-label">Jammer (J):</span> <span className="tactical-val">{probe.p_jammer_dbm} dBm</span></div>
-            <div className="tactical-row"><span className="tactical-label">Ground:</span> <span className="tactical-val">{probe.elev_m} m</span></div>
-            <div className="tactical-row"><span className="tactical-label">Shielding:</span> <span className="tactical-val">{probe.shielding_db > 0 ? `+${probe.shielding_db} dB` : '0 dB'}</span></div>
-          </div>
-          <div className="tactical-details">{probe.details}</div>
-        </div>
-      )}
+      {probe && <TacticalInspectorProbe probe={probe} />}
 
       {/* Top-Right Floating Tactical Toolbar and Legend */}
       <div className="map-hud-topright">
@@ -299,28 +283,55 @@ export function MapPanel() {
           </Button>
         </div>
 
-        {legendOpen && (
-          <div className="map-legend">
-            <div className="map-legend-header">
-              <span style={{ fontWeight: 700, fontSize: '11px', letterSpacing: '0.04em' }}>TACTICAL LEGEND</span>
-              <button
-                type="button"
-                className="map-legend-close"
-                onClick={() => setLegendOpen(false)}
-                aria-label="Close legend"
-              >
-                ×
-              </button>
-            </div>
-            {LEGEND.map((l) => (
-              <div key={l.label} className="map-legend-row">
-                <span className={`map-legend-key map-legend-${l.kind}`} style={{ '--c': l.color } as CSSProperties} />
-                {l.label}
-              </div>
-            ))}
-          </div>
-        )}
+        {legendOpen && <TacticalLegend onClose={() => setLegendOpen(false)} />}
       </div>
+    </div>
+  )
+}
+
+function TacticalInspectorProbe({ probe }: { readonly probe: ProbeData }) {
+  const jsLabel = probe.js_db >= 0 ? `+${probe.js_db}` : `${probe.js_db}`
+  const shieldLabel = probe.shielding_db > 0 ? `+${probe.shielding_db} dB` : '0 dB'
+
+  return (
+    <div className="tactical-inspector">
+      <div className="tactical-inspector-header">
+        <span className="tactical-inspector-title">TACTICAL PROBE</span>
+        <span className={`tactical-badge tactical-badge-${probe.status.toLowerCase()}`}>
+          {probe.status}: {jsLabel} dB J/S
+        </span>
+      </div>
+      <div className="tactical-grid">
+        <div className="tactical-row"><span className="tactical-label">Pilot (S):</span> <span className="tactical-val">{probe.p_pilot_dbm} dBm</span></div>
+        <div className="tactical-row"><span className="tactical-label">Jammer (J):</span> <span className="tactical-val">{probe.p_jammer_dbm} dBm</span></div>
+        <div className="tactical-row"><span className="tactical-label">Ground:</span> <span className="tactical-val">{probe.elev_m} m</span></div>
+        <div className="tactical-row"><span className="tactical-label">Shielding:</span> <span className="tactical-val">{shieldLabel}</span></div>
+      </div>
+      <div className="tactical-details">{probe.details}</div>
+    </div>
+  )
+}
+
+function TacticalLegend({ onClose }: { readonly onClose: () => void }) {
+  return (
+    <div className="map-legend">
+      <div className="map-legend-header">
+        <span style={{ fontWeight: 700, fontSize: '11px', letterSpacing: '0.04em' }}>TACTICAL LEGEND</span>
+        <button
+          type="button"
+          className="map-legend-close"
+          onClick={onClose}
+          aria-label="Close legend"
+        >
+          ×
+        </button>
+      </div>
+      {LEGEND.map((l) => (
+        <div key={l.label} className="map-legend-row">
+          <span className={`map-legend-key map-legend-${l.kind}`} style={{ '--c': l.color } as CSSProperties} />
+          {l.label}
+        </div>
+      ))}
     </div>
   )
 }

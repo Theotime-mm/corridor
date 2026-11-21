@@ -86,6 +86,36 @@ class PolarCoverageResult:
     """Shape (len(azimuths), len(radii)) of bool (pure geometric optical line-of-sight)."""
 
 
+def _eval_ray_clearance(
+    r_idx: int,
+    radii_arr: np.ndarray,
+    tx_abs_h: float,
+    rx_abs_h: np.ndarray,
+    eff_terrain: np.ndarray,
+    wavelength_m: float,
+) -> tuple[float, bool]:
+    """Calculate single knife-edge diffraction loss and line-of-sight for a radial ray segment."""
+    d_curr = radii_arr[r_idx]
+    rx_h = rx_abs_h[r_idx]
+    sub_d = radii_arr[: r_idx + 1]
+    ray_line = tx_abs_h + (sub_d / d_curr) * (rx_h - tx_abs_h)
+    clearance = ray_line - eff_terrain[: r_idx + 1]
+
+    interior_clearance = clearance[1:-1] if r_idx > 1 else np.array([clearance[0]])
+    min_clearance = float(np.min(interior_clearance)) if len(interior_clearance) > 0 else 10.0
+    has_los = min_clearance >= 0.0
+
+    if has_los and min_clearance > 15.0:
+        return 0.0, True
+
+    d1 = sub_d[1:-1] if r_idx > 1 else np.array([d_curr / 2.0])
+    d2 = d_curr - d1
+    factor = np.sqrt((2.0 * d_curr) / (wavelength_m * np.maximum(1.0, d1 * d2)))
+    nu_arr = -interior_clearance * factor
+    dominant_nu = float(np.max(nu_arr)) if len(nu_arr) > 0 else -1.0
+    return knife_edge_loss_db(dominant_nu), has_los
+
+
 def compute_polar_coverage(
     dem: DemProvider,
     tx_pos: Position,
@@ -163,43 +193,22 @@ def compute_polar_coverage(
         # Direct ray line altitude at intervening points:
         # A fast, physically accurate single-knife-edge estimation for radial coverage:
         for r_idx in range(num_r):
-            d_curr = radii_arr[r_idx]
-            rx_h = rx_abs_h[r_idx]
             fspl = float(fspl_arr[r_idx])
-
             if r_idx == 0:
-                loss_matrix[az_idx, r_idx] = fspl
-                p_rx_matrix[az_idx, r_idx] = eirp_dbm - fspl
-                los_matrix[az_idx, r_idx] = True
+                loss_matrix[az_idx, 0] = fspl
+                p_rx_matrix[az_idx, 0] = eirp_dbm - fspl
+                los_matrix[az_idx, 0] = True
                 continue
 
-            # Sub-span up to r_idx:
-            # Ray line from TX to current RX:
-            sub_d = radii_arr[: r_idx + 1]
-            ray_line = tx_abs_h + (sub_d / d_curr) * (rx_h - tx_abs_h)
-            clearance = ray_line - eff_terrain[: r_idx + 1]
-
-            # Interior clearance (excluding endpoints)
-            interior_clearance = clearance[1:-1] if r_idx > 1 else np.array([clearance[0]])
-            min_clearance = (
-                float(np.min(interior_clearance)) if len(interior_clearance) > 0 else 10.0
+            diff_loss, has_los = _eval_ray_clearance(
+                r_idx=r_idx,
+                radii_arr=radii_arr,
+                tx_abs_h=tx_abs_h,
+                rx_abs_h=rx_abs_h,
+                eff_terrain=eff_terrain,
+                wavelength_m=wavelength_m,
             )
-
-            has_los = min_clearance >= 0.0
             los_matrix[az_idx, r_idx] = has_los
-
-            if has_los and min_clearance > 15.0:
-                # Clear line of sight with ample Fresnel clearance
-                diff_loss = 0.0
-            else:
-                # Find dominant obstruction
-                d1 = sub_d[1:-1] if r_idx > 1 else np.array([d_curr / 2.0])
-                d2 = d_curr - d1
-                factor = np.sqrt((2.0 * d_curr) / (wavelength_m * np.maximum(1.0, d1 * d2)))
-                nu_arr = -interior_clearance * factor
-                dominant_nu = float(np.max(nu_arr)) if len(nu_arr) > 0 else -1.0
-                diff_loss = knife_edge_loss_db(dominant_nu)
-
             tot_loss = fspl + diff_loss
             loss_matrix[az_idx, r_idx] = tot_loss
             p_rx_matrix[az_idx, r_idx] = eirp_dbm - tot_loss
@@ -236,7 +245,7 @@ def extract_polar_contour_ring(
         powers = coverage.p_rx_matrix_dbm[az_idx, :]
 
         # Find furthest distance where P_rx >= threshold_dbm
-        valid_indices = np.where(powers >= threshold_dbm)[0]
+        valid_indices = np.nonzero(powers >= threshold_dbm)[0]
         if len(valid_indices) == 0:
             target_r = min_r
         else:
@@ -306,7 +315,6 @@ def compute_terrain_aware_jammer_ring(
     threshold_db: float,
     drone_h_agl_m: float = 20.0,
     jammer_h_agl_m: float = 10.0,
-    pilot_h_agl_m: float = 2.0,
     azimuth_step_deg: float = 5.0,
     max_range_m: float = 8000.0,
     range_step_m: float = 50.0,
@@ -371,6 +379,44 @@ def compute_terrain_aware_jammer_ring(
     return ring
 
 
+def _heatmap_status_style(js_val: float) -> tuple[str, str, float]:
+    """Map J/S ratio in dB to status text, hex color, and opacity."""
+    if js_val < -6.0:
+        return "SAFE", "#20c997", 0.35
+    if js_val < 0.0:
+        return "CAUTION", "#fab005", 0.55
+    if js_val < 6.0:
+        return "CONTENTION", "#fd7e14", 0.65
+    return "JAMMED", "#e03131", 0.75
+
+
+def _make_heatmap_geometry(
+    p: Position,
+    d_lon: float,
+    d_lat: float,
+    cells: bool,
+) -> dict[str, Any]:
+    """Build GeoJSON Point or quad Polygon geometry for a heatmap cell."""
+    if cells:
+        lon, lat = p.lon, p.lat
+        return {
+            "type": "Polygon",
+            "coordinates": [
+                [
+                    [round(lon - d_lon, 6), round(lat - d_lat, 6)],
+                    [round(lon + d_lon, 6), round(lat - d_lat, 6)],
+                    [round(lon + d_lon, 6), round(lat + d_lat, 6)],
+                    [round(lon - d_lon, 6), round(lat + d_lat, 6)],
+                    [round(lon - d_lon, 6), round(lat - d_lat, 6)],
+                ]
+            ],
+        }
+    return {
+        "type": "Point",
+        "coordinates": [round(p.lon, 6), round(p.lat, 6)],
+    }
+
+
 def compute_js_heatmap_geojson(
     dem: DemProvider,
     pilot_pos: Position,
@@ -380,7 +426,6 @@ def compute_js_heatmap_geojson(
     bounds: tuple[float, float, float, float],
     step_m: float = 250.0,
     drone_h_agl_m: float = 20.0,
-    pilot_h_agl_m: float = 2.0,
     jammer_h_agl_m: float = 10.0,
     cells: bool = False,
 ) -> dict[str, Any]:
@@ -490,66 +535,46 @@ def compute_js_heatmap_geojson(
     features: list[dict[str, Any]] = []
     for i, p in enumerate(grid_pts):
         js_val = float(js_arr[i])
-        w_val = float(weights[i])
-        pj_val = float(max_jammer_prx[i])
-        ps_val = float(p_rx_pilot[i])
-        el_val = float(elevs[i])
-
-        if js_val < -6.0:
-            status = "SAFE"
-            color = "#20c997"
-            opacity = 0.35
-        elif js_val < 0.0:
-            status = "CAUTION"
-            color = "#fab005"
-            opacity = 0.55
-        elif js_val < 6.0:
-            status = "CONTENTION"
-            color = "#fd7e14"
-            opacity = 0.65
-        else:
-            status = "JAMMED"
-            color = "#e03131"
-            opacity = 0.75
-
-        if cells:
-            lon, lat = p.lon, p.lat
-            geom: dict[str, Any] = {
-                "type": "Polygon",
-                "coordinates": [
-                    [
-                        [round(lon - d_lon, 6), round(lat - d_lat, 6)],
-                        [round(lon + d_lon, 6), round(lat - d_lat, 6)],
-                        [round(lon + d_lon, 6), round(lat + d_lat, 6)],
-                        [round(lon - d_lon, 6), round(lat + d_lat, 6)],
-                        [round(lon - d_lon, 6), round(lat - d_lat, 6)],
-                    ]
-                ],
-            }
-        else:
-            geom = {
-                "type": "Point",
-                "coordinates": [round(p.lon, 6), round(p.lat, 6)],
-            }
-
+        status, color, opacity = _heatmap_status_style(js_val)
+        geom = _make_heatmap_geometry(p, d_lon, d_lat, cells)
         features.append(
             {
                 "type": "Feature",
                 "geometry": geom,
                 "properties": {
-                    "weight": round(w_val, 3),
+                    "weight": round(float(weights[i]), 3),
                     "js_db": round(js_val, 1),
                     "status": status,
                     "color": color,
                     "opacity": opacity,
-                    "p_jammer_dbm": round(pj_val, 1),
-                    "p_pilot_dbm": round(ps_val, 1),
-                    "elev_m": round(el_val, 0),
+                    "p_jammer_dbm": round(float(max_jammer_prx[i]), 1),
+                    "p_pilot_dbm": round(float(p_rx_pilot[i]), 1),
+                    "elev_m": round(float(elevs[i]), 0),
                 },
             }
         )
 
     return {"type": "FeatureCollection", "features": features}
+
+
+def _probe_status(js_db: float) -> str:
+    """Map probe J/S ratio to tactical threat status."""
+    if js_db < -6.0:
+        return "SAFE"
+    if js_db < 0.0:
+        return "CAUTION"
+    if js_db < 6.0:
+        return "CONTENTION"
+    return "JAMMED"
+
+
+def _probe_details(shielding_db: float, diff_loss_db: float, jammer_id: str) -> str:
+    """Generate human-readable tactical terrain shielding explanation."""
+    if shielding_db > 10.0:
+        return f"Terrain ridge provides {shielding_db:.1f} dB diffraction shadow from {jammer_id}"
+    if diff_loss_db > 0.0:
+        return f"Partial terrain obstruction ({diff_loss_db:.1f} dB loss from {jammer_id})"
+    return f"Direct line of sight to {jammer_id}"
 
 
 def probe_point_rf(
@@ -636,25 +661,8 @@ def probe_point_rf(
     js_db = worst_jammer_lb.p_rx_dbm - pilot_lb.p_rx_dbm
     shielding_db = worst_jammer_lb.diffraction_loss_db - pilot_lb.diffraction_loss_db
 
-    if js_db < -6.0:
-        status = "SAFE"
-    elif js_db < 0.0:
-        status = "CAUTION"
-    elif js_db < 6.0:
-        status = "CONTENTION"
-    else:
-        status = "JAMMED"
-
-    if shielding_db > 10.0:
-        details = (
-            f"Terrain ridge provides {shielding_db:.1f} dB diffraction shadow "
-            f"from {worst_jammer_id}"
-        )
-    elif worst_jammer_lb.diffraction_loss_db > 0.0:
-        diff_val = worst_jammer_lb.diffraction_loss_db
-        details = f"Partial terrain obstruction ({diff_val:.1f} dB loss from {worst_jammer_id})"
-    else:
-        details = f"Direct line of sight to {worst_jammer_id}"
+    status = _probe_status(js_db)
+    details = _probe_details(shielding_db, worst_jammer_lb.diffraction_loss_db, worst_jammer_id)
 
     return {
         "lat": target_pos.lat,

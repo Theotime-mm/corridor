@@ -12,6 +12,16 @@ export function friendlyZoneState(jammerId: string, cuts: Cut[], t: number): Zon
   return 'on'
 }
 
+function interpolateSegment(a: RoutePoint, b: RoutePoint, t: number) {
+  const f = b.t === a.t ? 0 : (t - a.t) / (b.t - a.t)
+  const moving = a.action === 'fly'
+  return {
+    pos: moving ? { lat: a.lat + f * (b.lat - a.lat), lon: a.lon + f * (b.lon - a.lon) } : a,
+    action: a.action,
+    headingDeg: moving ? bearingDeg(a, b) : null,
+  }
+}
+
 /** Drone position along a timed route; the action holds until the next point. */
 export function positionAt(
   route: RoutePoint[],
@@ -26,17 +36,11 @@ export function positionAt(
     const a = route[i]
     const b = route[i + 1]
     if (t >= a.t && t <= b.t) {
-      const f = b.t === a.t ? 0 : (t - a.t) / (b.t - a.t)
-      const moving = a.action === 'fly'
-      return {
-        pos: moving ? { lat: a.lat + f * (b.lat - a.lat), lon: a.lon + f * (b.lon - a.lon) } : a,
-        action: a.action,
-        headingDeg: moving ? bearingDeg(a, b) : null,
-      }
+      return interpolateSegment(a, b, t)
     }
   }
-  const last = route[route.length - 1]
-  const prev = route.length > 1 ? route[route.length - 2] : null
+  const last = route.at(-1)!
+  const prev = route.at(-2) ?? null
   return {
     pos: { lat: last.lat, lon: last.lon },
     action: last.action,

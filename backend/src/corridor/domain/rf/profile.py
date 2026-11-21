@@ -115,7 +115,7 @@ def extract_elevation_profile(
 
     # Atmospheric curvature correction
     effective_earth_radius = k_factor * EARTH_RADIUS_M
-    # delta_h = d * (D - d) / (2 * Re)
+    # Effective Earth curvature correction formula
     earth_bulge = (d_vals * (total_d_m - d_vals)) / (2.0 * effective_earth_radius)
 
     points = [
