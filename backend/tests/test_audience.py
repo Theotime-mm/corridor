@@ -13,12 +13,13 @@ from corridor.domain.events import (
 from corridor.domain.geo import Position
 from corridor.domain.scenario import Scenario
 from corridor.domain.state import ClockState, Cut
-from corridor.domain.zones import constraints_by_mission
+from corridor.engine.clock import SimClock
+from corridor.engine.engine import Engine
 
 
 @pytest.fixture
 def audience(two_missions: Scenario) -> Audience:
-    return Audience(two_missions, constraints_by_mission(two_missions, 100))
+    return Audience(Engine(two_missions, 100, SimClock(20)))
 
 
 def viewer(audience: Audience, callsign: str) -> Viewer:

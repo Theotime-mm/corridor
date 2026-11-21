@@ -17,7 +17,6 @@ from corridor.domain.events import (
     Notification,
 )
 from corridor.domain.scenario import Scenario
-from corridor.domain.zones import constraints_by_mission
 from corridor.engine.clock import SimClock
 from corridor.engine.engine import CommandRejected, Engine
 
@@ -25,7 +24,7 @@ EW = "EW-OFFICER"
 
 
 def make_engine(scenario: Scenario, wall: float = 0.0) -> Engine:
-    return Engine(scenario, constraints_by_mission(scenario, 100), SimClock(20, wall=lambda: wall))
+    return Engine(scenario, 100, SimClock(20, wall=lambda: wall))
 
 
 @pytest.fixture
@@ -71,9 +70,7 @@ def test_schedule_cut_rejections(
 
 def test_schedule_cut_in_the_past_is_rejected(scenario: Scenario) -> None:
     wall = [0.0]
-    engine = Engine(
-        scenario, constraints_by_mission(scenario, 100), SimClock(20, wall=lambda: wall[0])
-    )
+    engine = Engine(scenario, 100, SimClock(20, wall=lambda: wall[0]))
     engine.submit(SetClock(actor=EW, paused=False))
     wall[0] = 25.0  # 500 simulated seconds
     with pytest.raises(CommandRejected, match="past"):

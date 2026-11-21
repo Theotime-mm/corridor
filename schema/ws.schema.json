@@ -110,7 +110,9 @@
               "cut.confirm": "#/$defs/ConfirmCut",
               "cut.schedule": "#/$defs/ScheduleCut",
               "inject.delay": "#/$defs/InjectDelay",
-              "mission.launch": "#/$defs/LaunchMission"
+              "mission.launch": "#/$defs/LaunchMission",
+              "mission.request": "#/$defs/RequestMission",
+              "mission.update": "#/$defs/UpdateMission"
             },
             "propertyName": "type"
           },
@@ -123,6 +125,12 @@
             },
             {
               "$ref": "#/$defs/ConfirmCut"
+            },
+            {
+              "$ref": "#/$defs/RequestMission"
+            },
+            {
+              "$ref": "#/$defs/UpdateMission"
             },
             {
               "$ref": "#/$defs/LaunchMission"
@@ -332,6 +340,45 @@
         "cut"
       ],
       "title": "CutScheduled",
+      "type": "object"
+    },
+    "Drone": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "band": {
+          "title": "Band",
+          "type": "string"
+        },
+        "link_eirp_w": {
+          "description": "EIRP of the pilot's control link, watts.",
+          "exclusiveMinimum": 0,
+          "title": "Link Eirp W",
+          "type": "number"
+        },
+        "cruise_speed_mps": {
+          "exclusiveMinimum": 0,
+          "title": "Cruise Speed Mps",
+          "type": "number"
+        },
+        "battery_max_s": {
+          "description": "Flight time on a full battery.",
+          "exclusiveMinimum": 0,
+          "title": "Battery Max S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "band",
+        "link_eirp_w",
+        "cruise_speed_mps",
+        "battery_max_s"
+      ],
+      "title": "Drone",
       "type": "object"
     },
     "DroneState": {
@@ -693,6 +740,7 @@
     },
     "Mission": {
       "additionalProperties": false,
+      "description": "Drone fields are copied from the pilot's drone, so a mission stands on its own.",
       "properties": {
         "id": {
           "title": "Id",
@@ -803,6 +851,27 @@
       "title": "MissionConstraints",
       "type": "object"
     },
+    "MissionCreated": {
+      "additionalProperties": false,
+      "description": "A pilot's request became a mission. Clients that see it get a new snapshot right after:\nthe mission may bring jammers and threats into their view.",
+      "properties": {
+        "type": {
+          "const": "mission.created",
+          "default": "mission.created",
+          "title": "Type",
+          "type": "string"
+        },
+        "mission": {
+          "$ref": "#/$defs/Mission"
+        }
+      },
+      "required": [
+        "type",
+        "mission"
+      ],
+      "title": "MissionCreated",
+      "type": "object"
+    },
     "MissionStatusChanged": {
       "additionalProperties": false,
       "properties": {
@@ -832,6 +901,27 @@
         "status"
       ],
       "title": "MissionStatusChanged",
+      "type": "object"
+    },
+    "MissionUpdated": {
+      "additionalProperties": false,
+      "description": "A mission on the ground got new points or a new departure; its plan is dropped and a\nnew one requested. Every client gets a new snapshot right after: the mission may enter or\nleave its view.",
+      "properties": {
+        "type": {
+          "const": "mission.updated",
+          "default": "mission.updated",
+          "title": "Type",
+          "type": "string"
+        },
+        "mission": {
+          "$ref": "#/$defs/Mission"
+        }
+      },
+      "required": [
+        "type",
+        "mission"
+      ],
+      "title": "MissionUpdated",
       "type": "object"
     },
     "MissionView": {
@@ -940,6 +1030,24 @@
         "cut"
       ],
       "title": "NotificationAction",
+      "type": "object"
+    },
+    "Pilot": {
+      "additionalProperties": false,
+      "properties": {
+        "callsign": {
+          "title": "Callsign",
+          "type": "string"
+        },
+        "drone": {
+          "$ref": "#/$defs/Drone"
+        }
+      },
+      "required": [
+        "callsign",
+        "drone"
+      ],
+      "title": "Pilot",
       "type": "object"
     },
     "PlanMetrics": {
@@ -1102,6 +1210,44 @@
       "title": "ReferenceLink",
       "type": "object"
     },
+    "RequestMission": {
+      "additionalProperties": false,
+      "description": "A pilot asks for a route: a new mission with its drone, planned right away.",
+      "properties": {
+        "type": {
+          "const": "mission.request",
+          "default": "mission.request",
+          "title": "Type",
+          "type": "string"
+        },
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "launch": {
+          "$ref": "#/$defs/Position",
+          "description": "Where the pilot stands and the drone takes off."
+        },
+        "target": {
+          "$ref": "#/$defs/Position"
+        },
+        "departure_s": {
+          "description": "Earliest departure; one in the past means as soon as possible.",
+          "minimum": 0,
+          "title": "Departure S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "actor",
+        "launch",
+        "target",
+        "departure_s"
+      ],
+      "title": "RequestMission",
+      "type": "object"
+    },
     "RoutePoint": {
       "additionalProperties": false,
       "description": "Position at time ``t``; ``action`` holds until the next point.",
@@ -1187,11 +1333,19 @@
           "title": "Enemy Threats",
           "type": "array"
         },
+        "pilots": {
+          "items": {
+            "$ref": "#/$defs/Pilot"
+          },
+          "minItems": 1,
+          "title": "Pilots",
+          "type": "array"
+        },
         "missions": {
+          "description": "Missions known at start. In the file, drone fields may be left out.",
           "items": {
             "$ref": "#/$defs/Mission"
           },
-          "minItems": 1,
           "title": "Missions",
           "type": "array"
         }
@@ -1203,6 +1357,7 @@
         "command_callsign",
         "friendly_jammers",
         "enemy_threats",
+        "pilots",
         "missions"
       ],
       "title": "Scenario",
@@ -1280,7 +1435,9 @@
                   "cut.scheduled": "#/$defs/CutScheduled",
                   "drone.state": "#/$defs/DroneState",
                   "jammer.restarted": "#/$defs/JammerRestarted",
+                  "mission.created": "#/$defs/MissionCreated",
                   "mission.status": "#/$defs/MissionStatusChanged",
+                  "mission.updated": "#/$defs/MissionUpdated",
                   "notification": "#/$defs/Notification",
                   "plan.updated": "#/$defs/PlanUpdated"
                 },
@@ -1298,6 +1455,12 @@
                 },
                 {
                   "$ref": "#/$defs/ClockChanged"
+                },
+                {
+                  "$ref": "#/$defs/MissionCreated"
+                },
+                {
+                  "$ref": "#/$defs/MissionUpdated"
                 },
                 {
                   "$ref": "#/$defs/MissionStatusChanged"
@@ -1449,6 +1612,48 @@
         "cuts"
       ],
       "title": "Snapshot",
+      "type": "object"
+    },
+    "UpdateMission": {
+      "additionalProperties": false,
+      "description": "Move the launch or target of a mission still on the ground, or change its departure.\n\nSame rights as launch: its pilot or the command post.",
+      "properties": {
+        "type": {
+          "const": "mission.update",
+          "default": "mission.update",
+          "title": "Type",
+          "type": "string"
+        },
+        "actor": {
+          "title": "Actor",
+          "type": "string"
+        },
+        "mission": {
+          "title": "Mission",
+          "type": "string"
+        },
+        "launch": {
+          "$ref": "#/$defs/Position"
+        },
+        "target": {
+          "$ref": "#/$defs/Position"
+        },
+        "departure_s": {
+          "description": "Earliest departure; one in the past means as soon as possible.",
+          "minimum": 0,
+          "title": "Departure S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "actor",
+        "mission",
+        "launch",
+        "target",
+        "departure_s"
+      ],
+      "title": "UpdateMission",
       "type": "object"
     },
     "Viewer": {

@@ -32,17 +32,24 @@ def test_enemy_radar_threat_loads() -> None:
         "enemy_threats": [
             {"type": "radar", "id": "R1", "pos": {"lat": 48.0, "lon": 11.0}, "radius_m": 2000}
         ],
+        "pilots": [
+            {
+                "callsign": "PILOT-1",
+                "drone": {
+                    "id": "UAV-1",
+                    "band": "2.4GHz",
+                    "link_eirp_w": 10,
+                    "cruise_speed_mps": 15,
+                    "battery_max_s": 1800,
+                },
+            }
+        ],
         "missions": [
             {
                 "id": "M1",
-                "drone_id": "UAV-1",
                 "pilot_callsign": "PILOT-1",
                 "launch": {"lat": 48.0, "lon": 11.0},
                 "target": {"lat": 48.1, "lon": 11.1},
-                "band": "2.4GHz",
-                "link_eirp_w": 10,
-                "cruise_speed_mps": 15,
-                "battery_max_s": 1800,
                 "departure_s": 600,
             }
         ],
@@ -104,19 +111,55 @@ def test_roles_come_from_the_scenario(two_missions: Scenario) -> None:
 @pytest.mark.parametrize(
     ("field", "value", "reason"),
     [
-        ("drone_id", "UAV-1", "duplicate drones"),
-        ("pilot_callsign", "PILOT-1", "duplicate callsigns"),
-        ("pilot_callsign", "CMD", "duplicate callsigns"),
-        ("pilot_callsign", "EW-J3", "duplicate callsigns"),
-        ("id", "M1", "duplicate ids"),
+        ("callsign", "PILOT-1", "duplicate callsigns"),
+        ("callsign", "CMD", "duplicate callsigns"),
+        ("callsign", "EW-J3", "duplicate callsigns"),
     ],
 )
-def test_missions_need_their_own_drone_pilot_and_id(
+def test_pilots_need_their_own_callsign(
     two_missions: Scenario, field: str, value: str, reason: str
 ) -> None:
     data = _data(two_missions)
-    data["missions"][1][field] = value
+    data["pilots"][1][field] = value
     with pytest.raises(ValidationError, match=reason):
+        Scenario.model_validate(data)
+
+
+def test_pilots_need_their_own_drone(two_missions: Scenario) -> None:
+    data = _data(two_missions)
+    data["pilots"][1]["drone"]["id"] = "UAV-1"
+    with pytest.raises(ValidationError, match="duplicate drones"):
+        Scenario.model_validate(data)
+
+
+def test_missions_need_their_own_id(two_missions: Scenario) -> None:
+    data = _data(two_missions)
+    data["missions"][1]["id"] = "M1"
+    with pytest.raises(ValidationError, match="duplicate ids"):
+        Scenario.model_validate(data)
+
+
+def test_a_file_mission_takes_its_drone_from_the_pilot(two_missions: Scenario) -> None:
+    data = _data(two_missions)
+    m2 = data["missions"][1]
+    for key in ("drone_id", "band", "link_eirp_w", "cruise_speed_mps", "battery_max_s"):
+        del m2[key]
+    m2["pilot_callsign"] = "PILOT-1"
+    mission = Scenario.model_validate(data).missions[1]
+    assert (mission.pilot_callsign, mission.drone_id) == ("PILOT-1", "UAV-1")
+
+
+def test_a_mission_needs_a_known_pilot(two_missions: Scenario) -> None:
+    data = _data(two_missions)
+    data["missions"][1]["pilot_callsign"] = "NOBODY"
+    with pytest.raises(ValidationError, match="unknown pilot"):
+        Scenario.model_validate(data)
+
+
+def test_a_mission_flies_its_pilot_drone(two_missions: Scenario) -> None:
+    data = _data(two_missions)
+    data["missions"][1]["band"] = "5.8GHz"
+    with pytest.raises(ValidationError, match="drone fields differ"):
         Scenario.model_validate(data)
 
 
@@ -126,9 +169,16 @@ def test_one_operator_may_run_several_jammers(two_missions: Scenario) -> None:
     assert Scenario.model_validate(data).role_of("EW-J3") == "operator"
 
 
-def test_a_scenario_needs_a_mission(scenario: Scenario) -> None:
+def test_a_scenario_may_start_without_mission(scenario: Scenario) -> None:
     data = _data(scenario)
     data["missions"] = []
+    assert Scenario.model_validate(data).role_of("PILOT-1") == "pilot"
+
+
+def test_a_scenario_needs_a_pilot(scenario: Scenario) -> None:
+    data = _data(scenario)
+    data["missions"] = []
+    data["pilots"] = []
     with pytest.raises(ValidationError):
         Scenario.model_validate(data)
 

@@ -8,6 +8,7 @@ from pydantic import Field
 
 from corridor.domain.geo import Position
 from corridor.domain.model import Model
+from corridor.domain.scenario import Mission
 from corridor.domain.state import ClockState, Cut, MissionStatus
 
 
@@ -29,6 +30,23 @@ class CutConfirmed(Model):
 class ClockChanged(Model):
     type: Literal["clock"] = "clock"
     clock: ClockState
+
+
+class MissionCreated(Model):
+    """A pilot's request became a mission. Clients that see it get a new snapshot right after:
+    the mission may bring jammers and threats into their view."""
+
+    type: Literal["mission.created"] = "mission.created"
+    mission: Mission
+
+
+class MissionUpdated(Model):
+    """A mission on the ground got new points or a new departure; its plan is dropped and a
+    new one requested. Every client gets a new snapshot right after: the mission may enter or
+    leave its view."""
+
+    type: Literal["mission.updated"] = "mission.updated"
+    mission: Mission
 
 
 class MissionStatusChanged(Model):
@@ -112,6 +130,8 @@ Event = Annotated[
     | CutCancelled
     | CutConfirmed
     | ClockChanged
+    | MissionCreated
+    | MissionUpdated
     | MissionStatusChanged
     | Notification
     | PlanUpdated

@@ -146,3 +146,39 @@ export function boundsOf(grids: Grid[]): [[number, number], [number, number]] | 
     [Math.max(...lons), Math.max(...lats)],
   ]
 }
+
+/** Great-circle distance in metres. */
+export function distanceM(a: Position, b: Position): number {
+  const r = 6_371_000
+  const rad = Math.PI / 180
+  const dLat = (b.lat - a.lat) * rad
+  const dLon = (b.lon - a.lon) * rad
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2
+  return 2 * r * Math.asin(Math.sqrt(h))
+}
+
+/** "48.1234, 11.5678" (comma or space separated) to a position; null when not valid. */
+export function parsePosition(text: string): Position | null {
+  const parts = text.trim().split(/[\s,;]+/).filter(Boolean)
+  if (parts.length !== 2) return null
+  const [lat, lon] = parts.map(Number)
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null
+  return { lat, lon }
+}
+
+export function formatPosition(p: Position): string {
+  return `${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`
+}
+
+/** Simulated time of the next `HH:MM` (UTC) at or after `nowS`; null when `hhmm` is not valid. */
+export function nextClockTime(startTime: string, nowS: number, hhmm: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim())
+  if (!match) return null
+  const [h, m] = [Number(match[1]), Number(match[2])]
+  if (h > 23 || m > 59) return null
+  const day = 86_400
+  const startMs = Date.parse(startTime)
+  const startOfDayS = (Math.floor((startMs / 1000 + nowS) / day) * day * 1000 - startMs) / 1000
+  const t = startOfDayS + h * 3600 + m * 60
+  return t >= nowS ? t : t + day
+}

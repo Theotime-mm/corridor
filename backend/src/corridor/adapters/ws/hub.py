@@ -42,6 +42,14 @@ class Hub:
                 message = message or self._encode(event)
                 outbox.put_nowait(message)
 
+    def resync(
+        self, snapshot_for: Callable[[Viewer], Snapshot], who: Callable[[Viewer], bool]
+    ) -> None:
+        """Send a new snapshot to every client ``who`` selects."""
+        for outbox, viewer in self._outboxes.items():
+            if who(viewer):
+                outbox.put_nowait(self._encode(snapshot_for(viewer)))
+
     def reply(self, outbox: Outbox, payload: Ack | Error) -> None:
         outbox.put_nowait(self._encode(payload))
 

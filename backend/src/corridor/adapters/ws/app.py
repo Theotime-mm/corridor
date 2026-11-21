@@ -4,6 +4,11 @@ The callsign says who connects; the scenario gives its role (``Scenario.role_of`
 callsign is closed with code ``4003``. Each client gets the snapshot and the events of its role
 (``corridor.adapters.ws.audience``), and may only send commands as itself: no authentication,
 but the filter would be decorative if any client could act under another callsign.
+
+A ``mission.created`` event is followed by a new snapshot for every client that sees it: the
+mission may bring jammers, threats and cuts into view that the client never received. A
+``mission.updated`` one is followed by a new snapshot for every client: the mission may also
+leave a view (an operator whose jammer it no longer crosses).
 """
 
 from __future__ import annotations
@@ -15,14 +20,15 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from corridor.adapters.ws.audience import Audience, Viewer
 from corridor.adapters.ws.hub import Hub, Outbox
 from corridor.adapters.ws.schemas import Ack, ClientMessage, Error, MissionView, Snapshot
-from corridor.domain.geo import Grid, Position
+from corridor.domain.events import Event, MissionCreated, MissionUpdated
+from corridor.domain.geo import Position
 from corridor.domain.rf.coverage import (
     ContourLevel,
     compute_js_heatmap_geojson,
@@ -32,13 +38,12 @@ from corridor.domain.rf.coverage import (
 )
 from corridor.domain.rf.dem import DemProvider, HillFeature, RasterDem, SyntheticDem
 from corridor.domain.scenario import Scenario
-from corridor.domain.zones import Zone, constraints_by_mission, nominal_zones
+from corridor.domain.zones import Zone, nominal_zones
 from corridor.engine.clock import SimClock
-from corridor.engine.engine import CommandRejected, Engine
+from corridor.engine.engine import CommandRejected, Engine, MissionRuntime
 from corridor.engine.replan import Replanner
 
-ReplannerFactory = Callable[[Scenario, dict[str, Grid]], Replanner]
-"""Takes the planning grid of each mission, by mission id."""
+ReplannerFactory = Callable[[Scenario], Replanner]
 
 TICK_S = 0.5
 UNKNOWN_CALLSIGN = 4003
@@ -110,7 +115,13 @@ def _find_dem_path(name: str) -> Path | None:
 
 
 def _select_dem(scenario: Scenario) -> DemProvider:
-    launch_p = scenario.missions[0].launch
+    # The scenario may start without missions: any jammer or threat locates the area too.
+    places = [
+        *(m.launch for m in scenario.missions),
+        *(j.pos for j in scenario.friendly_jammers),
+        *(t.pos for t in scenario.enemy_threats),
+    ]
+    launch_p = places[0] if places else Position(lat=48.14, lon=11.58)
     ny = _find_dem_path("copernicus_newyork.tif")
     if 40.5 <= launch_p.lat <= 41.0 and ny:
         return RasterDem(ny)
@@ -157,7 +168,7 @@ def _build_threat_coverage_features(
         ContourLevel(-100.0, "Enemy Fringe (-100 dBm)", "#cc5de8", 0.10, "#ae3ec9", 1),
     ]
 
-    default_band = scenario.missions[0].band
+    default_band = scenario.pilots[0].drone.band
     for jammer in scenario.friendly_jammers:
         cov = compute_polar_coverage(
             dem=dem,
@@ -205,14 +216,24 @@ def create_app(
     replanner: ReplannerFactory | None = None,
 ) -> FastAPI:
     """Without ``replanner``, nothing is planned. The first plan is requested at startup."""
-    constraints = constraints_by_mission(scenario, cell_m)
     nominal = nominal_zones(scenario)
-    grids = {mission: c.grid for mission, c in constraints.items()}
-    planner = replanner(scenario, grids) if replanner else None
-    engine = Engine(scenario, constraints, SimClock(clock_factor), planner)
-    audience = Audience(scenario, constraints)
+    planner = replanner(scenario) if replanner else None
+    engine = Engine(scenario, cell_m, SimClock(clock_factor), planner)
+    audience = Audience(engine)
     hub = Hub(engine.clock.now, audience.sees)
-    engine.subscribe(hub.publish)
+
+    def on_event(event: Event) -> None:
+        hub.publish(event)
+
+        def snapshot_for(viewer: Viewer) -> Snapshot:
+            return snapshot(engine, audience, viewer, nominal)
+
+        if isinstance(event, MissionCreated):
+            hub.resync(snapshot_for, lambda viewer: audience.sees(viewer, event))
+        elif isinstance(event, MissionUpdated):
+            hub.resync(snapshot_for, lambda _: True)
+
+    engine.subscribe(on_event)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -226,6 +247,16 @@ def create_app(
             planner.close()
 
     app = FastAPI(title="Corridor", lifespan=lifespan)
+
+    def runtime_for(mission_id: str | None) -> MissionRuntime:
+        """The mission asked for, else the first one; 404 when there is none yet."""
+        runtime = engine.missions.get(mission_id or "") or next(
+            iter(engine.missions.values()), None
+        )
+        if runtime is None:
+            raise HTTPException(status_code=404, detail="no mission yet")
+        return runtime
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -237,8 +268,8 @@ def create_app(
     @app.get("/api/rf/coverage")
     async def get_rf_coverage(drone_h_agl_m: float = 20.0) -> dict[str, Any]:
         """Return terrain-aware RF coverage GeoJSON contours for scenario threats."""
-        dem = _select_dem(scenario)
-        features = _build_threat_coverage_features(dem, scenario, drone_h_agl_m)
+        dem = _select_dem(engine.scenario)
+        features = _build_threat_coverage_features(dem, engine.scenario, drone_h_agl_m)
         return {"type": "FeatureCollection", "features": features}
 
     @app.get("/api/rf/heatmap")
@@ -249,11 +280,9 @@ def create_app(
         cells: bool = False,
     ) -> dict[str, Any]:
         """Return continuous J/S heatmap grid for GPU-accelerated heatmap rendering."""
-        dem = _select_dem(scenario)
-        m = scenario.mission(mission_id) if mission_id else scenario.missions[0]
-        if m is None:
-            m = scenario.missions[0]
-        grid = grids.get(m.id) or next(iter(grids.values()))
+        dem = _select_dem(engine.scenario)
+        runtime = runtime_for(mission_id)
+        m, grid = runtime.mission, runtime.constraints.grid
         jammers: list[tuple[str, Position, float]] = [
             (j.id, j.pos, j.eirp_w) for j in scenario.friendly_jammers
         ]
@@ -287,10 +316,8 @@ def create_app(
         drone_h_agl_m: float = 20.0,
     ) -> dict[str, Any]:
         """Probe real-time RF link budget & terrain shielding at a specific coordinate."""
-        dem = _select_dem(scenario)
-        m = scenario.mission(mission_id) if mission_id else scenario.missions[0]
-        if m is None:
-            m = scenario.missions[0]
+        dem = _select_dem(engine.scenario)
+        m = runtime_for(mission_id).mission
         jammers: list[tuple[str, Position, float]] = [
             (j.id, j.pos, j.eirp_w) for j in scenario.friendly_jammers
         ]

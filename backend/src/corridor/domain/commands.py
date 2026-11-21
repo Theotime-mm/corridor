@@ -10,6 +10,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
+from corridor.domain.geo import Position
 from corridor.domain.model import Model
 
 
@@ -40,6 +41,34 @@ class ConfirmCut(Model):
     cut: str
 
 
+class RequestMission(Model):
+    """A pilot asks for a route: a new mission with its drone, planned right away."""
+
+    type: Literal["mission.request"] = "mission.request"
+    actor: str
+    launch: Position = Field(description="Where the pilot stands and the drone takes off.")
+    target: Position
+    departure_s: float = Field(
+        ge=0, description="Earliest departure; one in the past means as soon as possible."
+    )
+
+
+class UpdateMission(Model):
+    """Move the launch or target of a mission still on the ground, or change its departure.
+
+    Same rights as launch: its pilot or the command post.
+    """
+
+    type: Literal["mission.update"] = "mission.update"
+    actor: str
+    mission: str
+    launch: Position
+    target: Position
+    departure_s: float = Field(
+        ge=0, description="Earliest departure; one in the past means as soon as possible."
+    )
+
+
 class LaunchMission(Model):
     """Only the mission pilot or the command post may launch."""
 
@@ -65,6 +94,13 @@ class InjectDelay(Model):
 
 
 Command = Annotated[
-    ScheduleCut | CancelCut | ConfirmCut | LaunchMission | SetClock | InjectDelay,
+    ScheduleCut
+    | CancelCut
+    | ConfirmCut
+    | RequestMission
+    | UpdateMission
+    | LaunchMission
+    | SetClock
+    | InjectDelay,
     Field(discriminator="type"),
 ]

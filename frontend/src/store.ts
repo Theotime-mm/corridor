@@ -8,9 +8,25 @@ import type {
   Cut,
   MissionView,
   Notification,
+  Position,
   ServerMessage,
   Snapshot,
 } from './api/protocol'
+
+/** Mission form at the top of the sidebar: a pilot's new mission, or a change to one still on
+ * the ground. */
+export interface RequestDraft {
+  /** Form shown at the top of the sidebar. */
+  open: boolean
+  /** Mission being changed; null = a new mission. */
+  editing: string | null
+  launch: Position | null
+  target: Position | null
+  /** Which point the next map click sets; null = map clicks do nothing. */
+  picking: 'launch' | 'target' | null
+}
+
+const NO_DRAFT: RequestDraft = { open: false, editing: null, launch: null, target: null, picking: null }
 
 export interface FeedItem {
   id: number
@@ -38,6 +54,7 @@ interface State {
   lastError: string | null
   /** Instant shown on map and timeline; null = follow the live clock. */
   viewTimeS: number | null
+  requestDraft: RequestDraft
 
   setConn: (conn: ConnStatus) => void
   signIn: (callsign: string) => void
@@ -46,6 +63,14 @@ interface State {
   selectMission: (id: string | null) => void
   setViewTime: (t: number | null) => void
   setError: (reason: string | null) => void
+  /** Open the new mission form, ready to pick the launch on the map (`launch` is the fallback). */
+  openRequest: (launch: Position | null) => void
+  /** Open the form on a mission still on the ground, with its points. */
+  openEdit: (mission: string, launch: Position, target: Position) => void
+  closeRequest: () => void
+  setRequestDraft: (patch: Partial<RequestDraft>) => void
+  /** Map click: sets the point being picked, if any; for a new mission, the target comes next. */
+  pickPoint: (pos: Position) => void
 }
 
 let feedId = 0
@@ -59,6 +84,7 @@ const SESSION = {
   feed: [],
   lastError: null,
   viewTimeS: null,
+  requestDraft: NO_DRAFT,
 } satisfies Partial<State>
 
 export const useStore = create<State>((set, get) => ({
@@ -75,6 +101,21 @@ export const useStore = create<State>((set, get) => ({
   selectMission: (selectedMission) => set({ selectedMission }),
   setViewTime: (viewTimeS) => set({ viewTimeS }),
   setError: (lastError) => set({ lastError }),
+  openRequest: (launch) => {
+    const draft = get().requestDraft
+    const fresh = draft.editing === null ? draft : NO_DRAFT
+    set({ requestDraft: { ...fresh, open: true, picking: 'launch', launch: fresh.launch ?? launch } })
+  },
+  openEdit: (mission, launch, target) =>
+    set({ requestDraft: { open: true, editing: mission, launch, target, picking: null } }),
+  closeRequest: () => set({ requestDraft: NO_DRAFT }),
+  setRequestDraft: (patch) => set({ requestDraft: { ...get().requestDraft, ...patch } }),
+  pickPoint: (pos) => {
+    const draft = get().requestDraft
+    if (!draft.picking) return
+    const next = draft.picking === 'launch' && draft.editing === null && !draft.target ? 'target' : null
+    set({ requestDraft: { ...draft, [draft.picking]: pos, picking: next } })
+  },
 
   apply: (msg) => {
     const p = msg.payload
@@ -116,6 +157,19 @@ export const useStore = create<State>((set, get) => ({
         const cuts = { ...get().cuts }
         delete cuts[p.cut.id]
         set({ ...clockSync, cuts })
+        return
+      }
+      case 'mission.created': {
+        // A new snapshot follows: it carries the mission and what it brings into view, and
+        // keeps the selection. The pilot who asked for it moves on to it.
+        const own = p.mission.pilot_callsign === get().callsign
+        set(own ? { ...clockSync, selectedMission: p.mission.id, requestDraft: NO_DRAFT } : clockSync)
+        return
+      }
+      case 'mission.updated': {
+        // A new snapshot follows. The form that sent the change closes.
+        const editing = get().requestDraft.editing === p.mission.id
+        set(editing ? { ...clockSync, requestDraft: NO_DRAFT } : clockSync)
         return
       }
       case 'mission.status':

@@ -7,6 +7,7 @@ from corridor.domain.commands import (
     ConfirmCut,
     InjectDelay,
     LaunchMission,
+    RequestMission,
     ScheduleCut,
     SetClock,
 )
@@ -18,11 +19,10 @@ from corridor.domain.events import (
     Notification,
     PlanUpdated,
 )
-from corridor.domain.geo import Position
+from corridor.domain.geo import Grid, Position
 from corridor.domain.planner.plan import plan_fallback, plan_mission
 from corridor.domain.scenario import Mission, Scenario
 from corridor.domain.state import Cut
-from corridor.domain.zones import constraints_by_mission
 from corridor.engine.clock import SimClock
 from corridor.engine.engine import CommandRejected, Engine
 from corridor.engine.replan import PlanDone
@@ -37,31 +37,28 @@ class SyncReplanner:
 
     def __init__(self, scenario: Scenario) -> None:
         self.scenario = scenario
-        self.grids = {m: c.grid for m, c in constraints_by_mission(scenario, 100).items()}
-
-    def mission(self, mission_id: str) -> Mission:
-        mission = self.scenario.mission(mission_id)
-        assert mission is not None
-        return mission
 
     def request(
         self,
-        mission: str,
+        mission: Mission,
+        grid: Grid,
         revision: int,
         cuts: list[Cut],
         earliest_departure_s: float,
         done: PlanDone,
     ) -> None:
-        plan = plan_mission(
-            self.scenario, self.mission(mission), self.grids[mission], cuts, earliest_departure_s
-        )
-        done(revision, plan)
+        done(revision, plan_mission(self.scenario, mission, grid, cuts, earliest_departure_s))
 
     def request_fallback(
-        self, mission: str, revision: int, position: Position, now_s: float, done: PlanDone
+        self,
+        mission: Mission,
+        grid: Grid,
+        revision: int,
+        position: Position,
+        now_s: float,
+        done: PlanDone,
     ) -> None:
-        grid = self.grids[mission]
-        done(revision, plan_fallback(self.scenario, self.mission(mission), grid, position, now_s))
+        done(revision, plan_fallback(self.scenario, mission, grid, position, now_s))
 
     def close(self) -> None:
         pass
@@ -72,7 +69,7 @@ class World:
         self.wall = 0.0
         self.engine = Engine(
             scenario,
-            constraints_by_mission(scenario, 100),
+            100,
             SimClock(1, wall=lambda: self.wall),
             SyncReplanner(scenario),
         )
@@ -191,3 +188,16 @@ def test_missions_fly_independently(two_missions: Scenario) -> None:
     world.run_to(1800)
     assert world.engine.state.missions == {"M1": "arrived", "M2": "planned"}
     assert {s.mission for s in world.of(DroneState)} == {"M1"}
+
+
+def test_a_requested_mission_is_planned_and_flies(scenario: Scenario) -> None:
+    world = World(scenario)
+    m1 = world.m1.mission
+    world.engine.submit(
+        RequestMission(actor=PILOT, launch=m1.launch, target=m1.target, departure_s=600)
+    )
+    (plan,) = [p for p in world.of(PlanUpdated) if p.mission == "M2"]
+    assert plan.status == "baseline"
+    world.engine.submit(LaunchMission(actor=PILOT, mission="M2"))
+    world.run_to(1800)
+    assert world.engine.state.missions["M2"] == "arrived"
