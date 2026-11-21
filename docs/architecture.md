@@ -107,6 +107,12 @@ Two kinds of data, kept apart:
   created live with `cut.schedule`.
 - Band filter: a jammer (friendly or enemy) only blocks a mission if its `bands` contain the
   mission `band`. A radar blocks every band.
+- **Enemy position error.** Enemy positions are estimates: `position_error_m` (default 0) is
+  the radius of the uncertainty on `pos`. The zone covers the zone of every position that
+  close, so the route stays clear wherever the threat really is. A radar disc grows by the
+  error e. A J/S disc grows by e × k / |k - 1| (exact on the side away from the pilot, a little
+  generous on the pilot side); a k < 1 bubble shrinks by as much, and server start fails if
+  nothing is left. Nominal footprints are centred on the threat, so they grow by e.
 - Several missions share the jammers, threats and cuts. A mission carries the drone, the pilot
   callsign (the pilot stands at the launch point), speed, battery and earliest departure.
 - Zones depend on the pilot (position and link power), so each mission has its own: the same J3
@@ -223,10 +229,12 @@ classDiagram
     }
     class EnemyRadar {
         +float radius_m
+        +float position_error_m
     }
     class EnemyJammer {
         +float eirp_w
         +list~str~ bands
+        +float position_error_m
     }
     class MissionConstraints {
         <<derived at start>>
@@ -502,8 +510,8 @@ interval between cut boundaries with numpy, not one per time step. A cell is for
 lies on the forbidden side of:
 
 - a friendly jammer zone, unless the jammer is cut at that moment;
-- an enemy jammer zone, at all times;
-- a radar disc (hard ban).
+- an enemy jammer zone, at all times, widened by its position error;
+- a radar disc (hard ban), widened by its position error.
 
 The test runs on the cell centre with the boundary pushed out by half the cell diagonal, so a
 cell is forbidden as soon as any part of it may touch a zone. For a directional jammer, a cell

@@ -417,6 +417,13 @@
           "minItems": 1,
           "title": "Bands",
           "type": "array"
+        },
+        "position_error_m": {
+          "default": 0,
+          "description": "Uncertainty on `pos`, metres: the zone covers every position this close.",
+          "minimum": 0,
+          "title": "Position Error M",
+          "type": "number"
         }
       },
       "required": [
@@ -424,7 +431,8 @@
         "id",
         "pos",
         "eirp_w",
-        "bands"
+        "bands",
+        "position_error_m"
       ],
       "title": "EnemyJammer",
       "type": "object"
@@ -450,13 +458,21 @@
           "exclusiveMinimum": 0,
           "title": "Radius M",
           "type": "number"
+        },
+        "position_error_m": {
+          "default": 0,
+          "description": "Uncertainty on `pos`, metres: the zone covers every position this close.",
+          "minimum": 0,
+          "title": "Position Error M",
+          "type": "number"
         }
       },
       "required": [
         "type",
         "id",
         "pos",
-        "radius_m"
+        "radius_m",
+        "position_error_m"
       ],
       "title": "EnemyRadar",
       "type": "object"
