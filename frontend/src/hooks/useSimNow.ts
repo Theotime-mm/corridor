@@ -11,7 +11,8 @@ export function useLiveSimTime(hz = 5): number {
     const id = window.setInterval(() => setNow(performance.now()), 1000 / hz)
     return () => window.clearInterval(id)
   }, [clock.paused, hz])
-  return liveSimTime(clock, syncedAt, clock.paused ? syncedAt : now)
+  // `now` is stale right after a resync or an unpause: never extrapolate from before the sync.
+  return liveSimTime(clock, syncedAt, clock.paused ? syncedAt : Math.max(now, syncedAt))
 }
 
 /** Instant shown on map and timeline: the scrubbed time, else live time. */
