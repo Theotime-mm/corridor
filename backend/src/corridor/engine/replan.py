@@ -51,7 +51,10 @@ class Replanner(Protocol):
         position: Position,
         now_s: float,
         done: PlanDone,
-    ) -> None: ...
+        level: int = 0,
+    ) -> None:
+        """``level``: the drone's flight level in 3D."""
+        ...
 
     def close(self) -> None: ...
 
@@ -96,8 +99,9 @@ class ProcessReplanner:
         position: Position,
         now_s: float,
         done: PlanDone,
+        level: int = 0,
     ) -> None:
-        future = self._pool.submit(plan_fallback, scenario, mission, grid, position, now_s)
+        future = self._pool.submit(plan_fallback, scenario, mission, grid, position, now_s, level)
         self._submit(mission.id, revision, done, future)
 
     def _submit(

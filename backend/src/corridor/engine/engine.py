@@ -63,9 +63,11 @@ from corridor.domain.events import (
     ThreatRemoved,
 )
 from corridor.domain.geo import LocalFrame
+from corridor.domain.planner.layers import forbidden_cells
 from corridor.domain.planner.plan import MissionPlan
 from corridor.domain.safety import (
     Flight,
+    LevelCells,
     cut_transitions,
     position_at,
     schedule_violation,
@@ -117,6 +119,8 @@ class MissionRuntime:
     frame: LocalFrame
     shapes: list[ThreatShape]
     """Zones of the concerned threats, in ``frame``, for the safety rule."""
+    cells: LevelCells | None = None
+    """3D: the friendly zones per level for the safety rule, instead of ``shapes``."""
     plan: PlanUpdated | None = None
     flight: Flight | None = None
     drone: DroneState | None = None
@@ -158,11 +162,17 @@ class Engine:
         scenario = scenario or self.scenario
         concerned = mission_constraints(scenario, mission, self._cell_m)
         ids = {*concerned.jammers, *concerned.threats}
+        cells = None
+        if scenario.terrain.mode == "3d":
+            friendly, _ = forbidden_cells(scenario, mission, concerned.grid)
+            by_jammer = {j: c for j, c in friendly.items() if j in ids}
+            cells = LevelCells(concerned.grid, scenario.terrain.levels_m, by_jammer)
         return MissionRuntime(
             mission=mission,
             constraints=concerned,
             frame=LocalFrame(mission.launch),
             shapes=[z for z in mission_shapes(scenario, mission) if z.threat in ids],
+            cells=cells,
         )
 
     def subscribe(self, subscriber: Subscriber) -> None:
@@ -278,7 +288,9 @@ class Engine:
         events: list[Event] = []
         if not flight.fallback_requested:
             cuts = list(self.state.cuts.values())
-            zone = schedule_violation(flight, now, runtime.frame, runtime.shapes, cuts)
+            zone = schedule_violation(
+                flight, now, runtime.frame, runtime.shapes, cuts, runtime.cells
+            )
             if zone is not None:
                 flight.fallback_requested = True
                 text = (
@@ -314,7 +326,9 @@ class Engine:
         if self._replanner is None or runtime.flight is None:
             return
         runtime.revision += 1
-        position = position_at(runtime.flight.route, runtime.flight.route_time(now))[0]
+        route_t = runtime.flight.route_time(now)
+        position = position_at(runtime.flight.route, route_t)[0]
+        level = runtime.cells.level_at(runtime.flight.route, route_t) if runtime.cells else 0
         self._replanner.request_fallback(
             self.scenario,
             runtime.mission,
@@ -323,6 +337,7 @@ class Engine:
             position,
             now,
             self._fallback_done_for(runtime),
+            level=level,
         )
 
     def _fallback_done_for(
@@ -592,10 +607,11 @@ class Engine:
         self.scenario = scenario
         for mission_id, fresh in runtimes.items():
             runtime = self.missions[mission_id]
-            runtime.constraints, runtime.frame, runtime.shapes = (
+            runtime.constraints, runtime.frame, runtime.shapes, runtime.cells = (
                 fresh.constraints,
                 fresh.frame,
                 fresh.shapes,
+                fresh.cells,
             )
 
     def _concerned_by(self, threat: str) -> list[str]:

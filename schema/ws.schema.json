@@ -1874,11 +1874,22 @@
           "minItems": 1,
           "title": "Levels M",
           "type": "array"
+        },
+        "mode": {
+          "default": "2d",
+          "description": "2d: one layer, free-space zones (discs). 3d: the flight levels, zones through the terrain, climbs and descents.",
+          "enum": [
+            "2d",
+            "3d"
+          ],
+          "title": "Mode",
+          "type": "string"
         }
       },
       "required": [
         "dem",
-        "levels_m"
+        "levels_m",
+        "mode"
       ],
       "title": "Terrain",
       "type": "object"
