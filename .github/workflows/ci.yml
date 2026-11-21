@@ -29,6 +29,7 @@ jobs:
   backend-lint:
     name: Backend (ruff, mypy)
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # a hung test fails fast instead of running for hours
     defaults:
       run:
         working-directory: backend
@@ -51,6 +52,7 @@ jobs:
   backend-test:
     name: Backend (pytest)
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # a hung test fails fast instead of running for hours
     defaults:
       run:
         working-directory: backend
@@ -72,6 +74,7 @@ jobs:
   frontend:
     name: Frontend (oxlint, tsc, vitest)
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # a hung test fails fast instead of running for hours
     defaults:
       run:
         working-directory: frontend
