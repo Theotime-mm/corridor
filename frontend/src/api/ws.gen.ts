@@ -312,7 +312,7 @@ export type Cuts = PlannedCut[];
 export type FriendlyJammers = FriendlyJammer[];
 export type EnemyThreats = (EnemyRadar | EnemyJammer | AvoidZone)[];
 /**
- * Elevation file (GeoTIFF, metres above sea level) in backend/data/, or an absolute path. None: flat ground.
+ * Elevation file (GeoTIFF, metres above sea level), a path inside backend/data/. None: flat ground.
  */
 export type Dem = string | null;
 /**
@@ -321,6 +321,10 @@ export type Dem = string | null;
  * @minItems 1
  */
 export type LevelsM = [number, ...number[]];
+/**
+ * 2d: one layer, free-space zones (discs). 3d: the flight levels, zones through the terrain, climbs and descents.
+ */
+export type Mode = "2d" | "3d";
 /**
  * @minItems 1
  */
@@ -923,6 +927,7 @@ export interface PlannedCut {
 export interface Terrain {
   dem: Dem;
   levels_m: LevelsM;
+  mode: Mode;
 }
 /**
  * This interface was referenced by `CorridorWs`'s JSON-Schema
