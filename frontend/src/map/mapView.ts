@@ -90,8 +90,18 @@ export interface DroneMark {
   selected: boolean
 }
 
+export interface RequestPoints {
+  launch: Position | null
+  target: Position | null
+  /** Crosshair cursor while a point is being picked. */
+  picking: boolean
+}
+
 export interface MapView {
   setScene(scene: Scene): void
+  /** Points of the mission request being filled in. */
+  setRequest(points: RequestPoints): void
+  onClick(handler: (pos: Position) => void): void
   setZoneStates(states: Record<string, ZoneState>): void
   setRoutes(routes: MissionRoutes[]): void
   setDrones(drones: DroneMark[]): void
@@ -130,6 +140,9 @@ export function createMapView(container: HTMLElement): MapView {
   let visibility: Required<LayerVisibility> = { grid: true, baseline: true, zones: true, rf: true, heatmap: false, relief: true }
   const markers: maplibregl.Marker[] = []
   const drones = new Map<string, maplibregl.Marker>()
+  const requestMarkers: maplibregl.Marker[] = []
+  let clickHandler: ((pos: Position) => void) | null = null
+  map.on('click', (e) => clickHandler?.({ lat: e.lngLat.lat, lon: e.lngLat.lng }))
 
   const setData = (source: string, data: FC) => {
     pending[source] = data
@@ -366,6 +379,15 @@ export function createMapView(container: HTMLElement): MapView {
       }
       for (const j of scenario.friendly_jammers) markers.push(label(map, j.pos, `${j.id} · ${j.operator_callsign}`, COLORS.friendlyOn))
       for (const t of scenario.enemy_threats) markers.push(label(map, t.pos, t.id, t.type === 'radar' ? COLORS.radar : COLORS.enemy))
+    },
+    setRequest({ launch, target, picking }) {
+      requestMarkers.splice(0).forEach((m) => m.remove())
+      if (launch) requestMarkers.push(label(map, launch, 'NEW LAUNCH', '#4dabf7'))
+      if (target) requestMarkers.push(label(map, target, 'NEW TARGET', '#ffd43b'))
+      map.getCanvas().style.cursor = picking ? 'crosshair' : ''
+    },
+    onClick(handler) {
+      clickHandler = handler
     },
     setZoneStates(s) {
       states = s

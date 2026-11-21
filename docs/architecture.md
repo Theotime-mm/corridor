@@ -91,7 +91,7 @@ Two kinds of data, kept apart:
 
 | | Scenario | World state |
 |---|---|---|
-| Content | start time, friendly jammers (with optional initial cuts), enemy threats, the missions, the command callsign, the reference link | cuts (scheduled or confirmed), status of each mission; later injected enemy threats |
+| Content | start time, friendly jammers (with optional initial cuts), enemy threats, the pilots and their drone, the missions known at start, the command callsign, the reference link | cuts (scheduled or confirmed), missions requested by pilots, status of each mission; later injected enemy threats |
 | Source | `backend/scenarios/*.json`, written by hand for the demo | built by the engine from the scenario, then changed by commands |
 | Lifetime | static during a run | in memory; restart the server to reset |
 
@@ -115,6 +115,12 @@ Two kinds of data, kept apart:
   nothing is left. Nominal footprints are centred on the threat, so they grow by e.
 - Several missions share the jammers, threats and cuts. A mission carries the drone, the pilot
   callsign (the pilot stands at the launch point), speed, battery and earliest departure.
+- **Pilots and missions.** `pilots` lists each pilot callsign with its drone (`id`, `band`,
+  `link_eirp_w`, `cruise_speed_mps`, `battery_max_s`). A pilot may fly several missions. Most
+  missions are created at runtime by the pilot (`mission.request`: launch, target, departure);
+  `missions` in the file only holds those known at start, possibly none. A file mission names
+  its pilot and leaves out the drone fields, which are copied from the pilot's drone (they may
+  be given, but must then match it). Engine-side, `Engine.scenario.missions` holds both kinds.
 - Zones depend on the pilot (position and link power), so each mission has its own: the same J3
   denies a different area to two missions.
 - **Concerned threats and grid** (`mission_constraints`). The grid is not in the file. The
@@ -127,9 +133,10 @@ Two kinds of data, kept apart:
   mission: the zone where a drone `reference_link.range_m` from its pilot loses a link of
   `reference_link.eirp_w`, that is a disc of radius `range_m × sqrt(Pj / (t × Ps))` centred on
   the jammer (two radii for a directional one, main beam and sidelobes). Radars keep their disc.
-- **Roles.** Every callsign has one: `command_callsign` (sees everything), a mission
-  `pilot_callsign`, or a jammer `operator_callsign` (an operator may run several jammers).
-- The scenario is checked on load: unique ids, drones and callsigns, at least one mission,
+- **Roles.** Every callsign has one: `command_callsign` (sees everything), a pilot `callsign`,
+  or a jammer `operator_callsign` (an operator may run several jammers).
+- The scenario is checked on load: unique ids, drones and callsigns, at least one pilot, each
+  mission flown by a known pilot with its drone,
   non-overlapping initial cuts, known threat `type`, no unknown field. Zones are computed at
   server start, which fails on a degenerate case (jammer on the launch point, or a boundary
   that is nearly a straight line).
@@ -152,10 +159,14 @@ Scenario file:
     { "type": "jammer", "id": "E1", "pos": { "lat": 48.111, "lon": 11.554 }, "eirp_w": 1,
       "bands": ["2.4GHz"] }
   ],
+  "pilots": [
+    { "callsign": "PILOT-1",
+      "drone": { "id": "UAV-1", "band": "2.4GHz", "link_eirp_w": 10, "cruise_speed_mps": 15,
+                 "battery_max_s": 1800 } }
+  ],
   "missions": [
-    { "id": "M1", "drone_id": "UAV-1", "pilot_callsign": "PILOT-1",
+    { "id": "M1", "pilot_callsign": "PILOT-1",
       "launch": { "lat": 48.145, "lon": 11.513 }, "target": { "lat": 48.145, "lon": 11.621 },
-      "band": "2.4GHz", "link_eirp_w": 10, "cruise_speed_mps": 15, "battery_max_s": 1800,
       "departure_s": 600 }
   ]
 }
@@ -187,12 +198,18 @@ classDiagram
         +float js_threshold_db
         +str command_callsign
         +mission(id) Mission
+        +pilot(callsign) Pilot
         +friendly_jammer(id) FriendlyJammer
         +role_of(callsign) Role
     }
     class ReferenceLink {
         +float eirp_w
         +float range_m
+    }
+    class Pilot {
+        +str callsign
+        +Drone drone
+        +mission(id, launch, target, departure_s) Mission
     }
     class Mission {
         +str id
@@ -256,7 +273,9 @@ classDiagram
     }
 
     Scenario *-- "1" ReferenceLink : reference_link
-    Scenario *-- "1..*" Mission : missions
+    Scenario *-- "1..*" Pilot : pilots
+    Scenario *-- "*" Mission : missions
+    Mission ..> Pilot : pilot_callsign
     Scenario *-- "*" FriendlyJammer : friendly_jammers
     Scenario *-- "*" EnemyThreat : enemy_threats
     FriendlyJammer *-- "0..1" Antenna : antenna
@@ -397,6 +416,7 @@ Rules enforced today:
 | `cut.schedule` | unknown friendly jammer or mission, start in the past, overlap with another cut of the same jammer |
 | `cut.confirm` | unknown cut, already confirmed, actor is not the jammer operator |
 | `cut.cancel` | unknown cut |
+| `mission.request` | actor is not a pilot |
 | `mission.launch` | unknown mission, mission not in `planned`, actor is neither its pilot nor the command |
 | `inject.delay` | unknown mission, no drone in flight |
 | any | `actor` is not the callsign the connection gave (WebSocket adapter) |
@@ -409,6 +429,9 @@ Rules enforced today:
 - A rejected command raises `CommandRejected` and leaves the state unchanged.
 - Each mission has a `MissionRuntime`: constraints, plan, flight, drone, revision. Revisions
   count per mission.
+- Missions: a pilot's `mission.request` builds a mission from its drone, computes its
+  constraints on the spot (same grid rules as at startup), adds it to `scenario.missions` and
+  requests its first plan.
 - Plans: at startup for every mission, and after every `cut.schedule`, `cut.confirm` or
   `cut.cancel` for the missions the cut's jammer concerns, while they are `planned`, the engine
   requests a plan with the next revision of that mission. The planner only gets the cuts of the
@@ -573,9 +596,10 @@ on the server (need to know: a pilot never receives another mission, even hidden
 
 | | command | pilot | operator |
 |---|---|---|---|
-| Missions (plans, drones, status) | all | its own | those its jammers concern |
-| Friendly jammers and their cuts | all | those that concern its mission | its own |
-| Enemy threats | all | those that concern its mission | none |
+| Missions (plans, drones, status) | all | its own (none before its first request) | those its jammers concern |
+| Friendly jammers and their cuts | all | those that concern its missions | its own |
+| Enemy threats | all | those that concern its missions | none |
+| Pilots (callsign, drone) | all | itself | pilots of the missions in view |
 | Nominal zones | all | none (it has its mission zones) | its jammers |
 | Notifications | all | to itself | to itself |
 | Clock | yes | yes | yes |
@@ -599,6 +623,9 @@ Server to client:
   A rejected command gets only an `error` with its `req_id`; an unparsable message gets an
   `error` with `req_id: null`.
 - A reconnect gets a fresh `snapshot`, so no client-side resync logic is needed.
+- `mission.created` is followed, for every client that sees the mission, by a fresh `snapshot`:
+  the mission may bring jammers, threats and cuts into its view. The client just replaces its
+  state, as on connect.
 
 **`plan.updated`**
 
@@ -627,6 +654,7 @@ Server to client:
 | `snapshot` | done | on connect, filtered for the viewer: viewer (callsign, role), scenario, nominal zones, clock, cuts, and per mission its constraints (grid, zones, concerned jammers and threats), status, latest plan (or null), latest drone state (or null) |
 | `clock` | done | sim time, factor, paused; on change only |
 | `cut.scheduled`, `cut.confirmed`, `cut.cancelled` | done | the cut (`requested_for`: the mission it was asked for, if any) |
+| `mission.created` | done | the full mission (drone fields from the pilot); a new `snapshot` follows, then a notification to the pilot and the first `plan.updated` |
 | `mission.status` | done | mission id; `planned`, `flying`, `arrived` |
 | `notification` | done | `to` (callsign), text, optional action (the button to show and the cut it confirms) |
 | `ack`, `error` | done | `req_id`, reason on error |
@@ -641,6 +669,7 @@ Server to client:
 | `cut.schedule` | done | jammer, start, end, optional mission it is asked for |
 | `cut.cancel` | done | cut id |
 | `cut.confirm` | done | cut id |
+| `mission.request` | done | `launch`, `target`, `departure_s` (a past one means as soon as possible); the mission id is `M<n>`, the first one free |
 | `mission.launch` | done | mission id |
 | `clock.set` | done | factor and/or paused |
 | `inject.delay` | done | mission id, `delay_s`: hold the flying drone where it is (demo twist) |

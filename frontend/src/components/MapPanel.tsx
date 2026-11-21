@@ -43,10 +43,12 @@ export function MapPanel() {
   const [is3D, setIs3D] = useState(false)
   const [legendOpen, setLegendOpen] = useState(false)
   const [probe, setProbe] = useState<ProbeData | null>(null)
+  const draft = useStore((s) => s.requestDraft)
 
   useEffect(() => {
     if (!container.current) return
     view.current = createMapView(container.current)
+    view.current.onClick((pos) => useStore.getState().pickPoint(pos))
     return () => {
       view.current?.destroy()
       view.current = null
@@ -174,6 +176,10 @@ export function MapPanel() {
     }
     view.current?.setDrones(marks)
   }, [list, selected, scrubbing, t])
+
+  useEffect(() => {
+    view.current?.setRequest({ launch: draft.launch, target: draft.target, picking: draft.picking !== null })
+  }, [draft])
 
   return (
     <div className="map-wrap">

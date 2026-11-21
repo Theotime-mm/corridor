@@ -8,9 +8,20 @@ import type {
   Cut,
   MissionView,
   Notification,
+  Position,
   ServerMessage,
   Snapshot,
 } from './api/protocol'
+
+/** Mission request being filled in by a pilot; points are picked on the map. */
+export interface RequestDraft {
+  launch: Position | null
+  target: Position | null
+  /** Which point the next map click sets; null = map clicks do nothing. */
+  picking: 'launch' | 'target' | null
+}
+
+const NO_DRAFT: RequestDraft = { launch: null, target: null, picking: null }
 
 export interface FeedItem {
   id: number
@@ -38,6 +49,7 @@ interface State {
   lastError: string | null
   /** Instant shown on map and timeline; null = follow the live clock. */
   viewTimeS: number | null
+  requestDraft: RequestDraft
 
   setConn: (conn: ConnStatus) => void
   signIn: (callsign: string) => void
@@ -46,6 +58,9 @@ interface State {
   selectMission: (id: string | null) => void
   setViewTime: (t: number | null) => void
   setError: (reason: string | null) => void
+  setRequestDraft: (patch: Partial<RequestDraft>) => void
+  /** Map click: sets the point being picked, if any. */
+  pickPoint: (pos: Position) => void
 }
 
 let feedId = 0
@@ -59,6 +74,7 @@ const SESSION = {
   feed: [],
   lastError: null,
   viewTimeS: null,
+  requestDraft: NO_DRAFT,
 } satisfies Partial<State>
 
 export const useStore = create<State>((set, get) => ({
@@ -75,6 +91,14 @@ export const useStore = create<State>((set, get) => ({
   selectMission: (selectedMission) => set({ selectedMission }),
   setViewTime: (viewTimeS) => set({ viewTimeS }),
   setError: (lastError) => set({ lastError }),
+  setRequestDraft: (patch) => set({ requestDraft: { ...get().requestDraft, ...patch } }),
+  pickPoint: (pos) => {
+    const draft = get().requestDraft
+    if (!draft.picking) return
+    // After the launch point, go straight on to the target if it is still missing.
+    const picking = draft.picking === 'launch' && !draft.target ? 'target' : null
+    set({ requestDraft: { ...draft, [draft.picking]: pos, picking } })
+  },
 
   apply: (msg) => {
     const p = msg.payload
@@ -116,6 +140,13 @@ export const useStore = create<State>((set, get) => ({
         const cuts = { ...get().cuts }
         delete cuts[p.cut.id]
         set({ ...clockSync, cuts })
+        return
+      }
+      case 'mission.created': {
+        // A new snapshot follows: it carries the mission and what it brings into view, and
+        // keeps the selection. The pilot who asked for it moves on to it.
+        const own = p.mission.pilot_callsign === get().callsign
+        set(own ? { ...clockSync, selectedMission: p.mission.id, requestDraft: NO_DRAFT } : clockSync)
         return
       }
       case 'mission.status':

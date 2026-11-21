@@ -6,7 +6,8 @@ must not block (the WebSocket hub only enqueues).
 
 Several missions share the jammers and the cuts. Each mission has its own runtime: plan,
 flight, drone, revision. A mission only reacts to the friendly jammers that concern it
-(``MissionConstraints.jammers``).
+(``MissionConstraints.jammers``). Missions come from the scenario file or from a pilot's
+``mission.request``; the engine keeps ``scenario.missions`` up to date with both.
 
 Plans: while a mission is still ``planned``, every change to the cuts of a jammer that
 concerns it requests a new plan with a new revision of that mission. The plan comes back later,
@@ -32,6 +33,7 @@ from corridor.domain.commands import (
     ConfirmCut,
     InjectDelay,
     LaunchMission,
+    RequestMission,
     ScheduleCut,
     SetClock,
 )
@@ -43,6 +45,7 @@ from corridor.domain.events import (
     DroneState,
     Event,
     JammerRestarted,
+    MissionCreated,
     MissionStatusChanged,
     Notification,
     NotificationAction,
@@ -59,7 +62,12 @@ from corridor.domain.safety import (
 )
 from corridor.domain.scenario import Mission, Scenario
 from corridor.domain.state import Cut, WorldState
-from corridor.domain.zones import MissionConstraints, ThreatShape, mission_shapes
+from corridor.domain.zones import (
+    MissionConstraints,
+    ThreatShape,
+    mission_constraints,
+    mission_shapes,
+)
 from corridor.engine.clock import SimClock
 from corridor.engine.replan import Replanner
 
@@ -103,29 +111,35 @@ class Engine:
     def __init__(
         self,
         scenario: Scenario,
-        constraints: dict[str, MissionConstraints],
+        cell_m: float,
         clock: SimClock,
         replanner: Replanner | None = None,
     ) -> None:
-        """``constraints`` by mission id, one per mission. Without ``replanner``, nothing is
-        planned."""
+        """``cell_m``: cell size of the mission planning grids. Without ``replanner``, nothing
+        is planned."""
         self.scenario = scenario
         self.clock = clock
         self.state = WorldState.from_scenario(scenario)
         self.missions: dict[str, MissionRuntime] = {}
+        self._cell_m = cell_m
         for mission in scenario.missions:
-            concerned = constraints[mission.id]
-            ids = {*concerned.jammers, *concerned.threats}
-            self.missions[mission.id] = MissionRuntime(
-                mission=mission,
-                constraints=concerned,
-                frame=LocalFrame(mission.launch),
-                shapes=[z for z in mission_shapes(scenario, mission) if z.threat in ids],
-            )
+            self.missions[mission.id] = self._runtime_for(mission)
         self._replanner = replanner
         self._subscribers: list[Subscriber] = []
         self._cut_ids = itertools.count(1)
+        self._mission_ids = itertools.count(1)
         self._last_tick_s = clock.now()
+
+    def _runtime_for(self, mission: Mission) -> MissionRuntime:
+        """Raises ValueError on a degenerate zone (jammer on the launch point)."""
+        concerned = mission_constraints(self.scenario, mission, self._cell_m)
+        ids = {*concerned.jammers, *concerned.threats}
+        return MissionRuntime(
+            mission=mission,
+            constraints=concerned,
+            frame=LocalFrame(mission.launch),
+            shapes=[z for z in mission_shapes(self.scenario, mission) if z.threat in ids],
+        )
 
     def subscribe(self, subscriber: Subscriber) -> None:
         self._subscribers.append(subscriber)
@@ -143,6 +157,9 @@ class Engine:
             case ConfirmCut() | CancelCut():
                 cut = next(e.cut for e in events if isinstance(e, CutConfirmed | CutCancelled))
                 self.request_plans(m.mission.id for m in self._concerned(cut.jammer))
+            case RequestMission():
+                created = next(e.mission for e in events if isinstance(e, MissionCreated))
+                self.request_plans([created.id])
         return events
 
     def request_plans(self, mission_ids: Iterable[str] | None = None) -> None:
@@ -159,7 +176,8 @@ class Engine:
             runtime.awaiting = runtime.revision
             cuts = [c for c in self.state.cuts.values() if runtime.concerns(c.jammer)]
             self._replanner.request(
-                runtime.mission.id,
+                runtime.mission,
+                runtime.constraints.grid,
                 runtime.revision,
                 cuts,
                 clock.sim_time_s + lead_s,
@@ -268,7 +286,8 @@ class Engine:
         runtime.revision += 1
         position = position_at(runtime.flight.route, runtime.flight.route_time(now))[0]
         self._replanner.request_fallback(
-            runtime.mission.id,
+            runtime.mission,
+            runtime.constraints.grid,
             runtime.revision,
             position,
             now,
@@ -315,6 +334,8 @@ class Engine:
                 return self._cancel_cut(command)
             case ConfirmCut():
                 return self._confirm_cut(command)
+            case RequestMission():
+                return self._request_mission(command)
             case LaunchMission():
                 return self._launch_mission(command)
             case InjectDelay():
@@ -402,6 +423,35 @@ class Engine:
         confirmed = cut.model_copy(update={"status": "confirmed"})
         self.state.cuts[cut.id] = confirmed
         return [CutConfirmed(cut=confirmed)]
+
+    def _request_mission(self, command: RequestMission) -> list[Event]:
+        pilot = self.scenario.pilot(command.actor)
+        if pilot is None:
+            raise CommandRejected("only a pilot can request a mission")
+        mission = pilot.mission(
+            self._next_mission_id(), command.launch, command.target, command.departure_s
+        )
+        try:
+            runtime = self._runtime_for(mission)
+        except ValueError as exc:
+            raise CommandRejected(f"no zones for this mission: {exc}") from exc
+        self.scenario = self.scenario.model_copy(
+            update={"missions": [*self.scenario.missions, mission]}
+        )
+        self.missions[mission.id] = runtime
+        self.state.missions[mission.id] = "planned"
+        text = f"Mission {mission.id} created for {mission.drone_id}, computing the route."
+        return [MissionCreated(mission=mission), Notification(to=pilot.callsign, text=text)]
+
+    def _next_mission_id(self) -> str:
+        """``M<n>``, skipping ids the scenario already uses."""
+        scenario = self.scenario
+        taken = {
+            *(m.id for m in scenario.missions),
+            *(j.id for j in scenario.friendly_jammers),
+            *(t.id for t in scenario.enemy_threats),
+        }
+        return next(i for n in self._mission_ids if (i := f"M{n}") not in taken)
 
     def _launch_mission(self, command: LaunchMission) -> list[Event]:
         """With a planner, the drone flies the current plan, which must be flyable."""

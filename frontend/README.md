@@ -25,7 +25,7 @@ src/
   domain/view.ts       pure helpers: zone state at an instant, drone position on a route, grid bounds
   map/mapView.ts       all MapLibre code, framework-free (setScene, setZoneStates, setRoutes, setDrones)
   hooks/useSimNow.ts   live sim time (extrapolated between server messages), view time
-  components/          SignIn, TopBar, MapPanel, MissionsCard, MissionCard, CutsCard, FeedCard,
+  components/          SignIn, TopBar, MapPanel, RequestMissionCard, MissionsCard, MissionCard, CutsCard, FeedCard,
                        TimelinePanel
   dev/mockPlan.ts      DEV ONLY: fake plan.updated until the planner emits real ones
 ```
@@ -46,6 +46,9 @@ src/
   when its jammer concerns it), `cut.confirm` (only enabled for the jammer's operator),
   `cut.cancel`, `mission.launch` (shown to the mission pilot and the command). Server errors show
   as an alert.
+- Pilot: "Request a mission" card. Pick launch and target on the map (crosshair, then the
+  target right after the launch), set the departure delay, send `mission.request`. The new
+  mission arrives with a fresh snapshot and gets selected.
 - Notification feed with the confirm button from `notification.action`.
 - Timeline: cuts per jammer in view, one row per drone in view with its route segments (`ground` / `fly` / `hover`), orange cursor on
   live time. Drag the cursor to scrub: map and zones follow; "Back to live" resets.

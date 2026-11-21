@@ -4,6 +4,7 @@ import { FeedCard } from './components/FeedCard'
 import { MapPanel } from './components/MapPanel'
 import { MissionCard } from './components/MissionCard'
 import { MissionsCard } from './components/MissionsCard'
+import { RequestMissionCard } from './components/RequestMissionCard'
 import { SignIn } from './components/SignIn'
 import { TimelinePanel } from './components/TimelinePanel'
 import { TopBar } from './components/TopBar'
@@ -30,6 +31,7 @@ export default function App() {
               </Alert>
             )}
             {!hasSnapshot && <Alert color="yellow">Waiting for corridor-server on /ws…</Alert>}
+            <RequestMissionCard />
             <MissionsCard />
             <MissionCard />
             <CutsCard />

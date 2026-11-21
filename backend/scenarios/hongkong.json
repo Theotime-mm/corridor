@@ -35,10 +35,21 @@
       ]
     }
   ],
+  "pilots": [
+    {
+      "callsign": "PILOT-1",
+      "drone": {
+        "id": "UAV-HK",
+        "band": "2.4GHz",
+        "link_eirp_w": 10,
+        "cruise_speed_mps": 15,
+        "battery_max_s": 2400
+      }
+    }
+  ],
   "missions": [
     {
       "id": "M-HK",
-      "drone_id": "UAV-HK",
       "pilot_callsign": "PILOT-1",
       "launch": {
         "lat": 22.302,
@@ -48,10 +59,6 @@
         "lat": 22.28,
         "lon": 114.21
       },
-      "band": "2.4GHz",
-      "link_eirp_w": 10,
-      "cruise_speed_mps": 15,
-      "battery_max_s": 2400,
       "departure_s": 600
     }
   ]

@@ -8,7 +8,7 @@ from starlette.websockets import WebSocketDisconnect
 from corridor.adapters.ws.app import UNKNOWN_CALLSIGN, create_app
 from corridor.domain.geo import Grid, Position
 from corridor.domain.planner.plan import plan_mission
-from corridor.domain.scenario import Scenario
+from corridor.domain.scenario import Mission, Scenario
 from corridor.domain.state import Cut
 from corridor.engine.replan import PlanDone, Replanner
 
@@ -108,6 +108,9 @@ def test_each_role_sees_its_own_part(two_missions: Scenario) -> None:
         assert [m["id"] for m in pilot_scenario["missions"]] == ["M1"]
         assert [j["id"] for j in pilot_scenario["friendly_jammers"]] == ["J3"]
         assert seen["pilot"]["nominal_zones"] == []
+        assert [p["callsign"] for p in pilot_scenario["pilots"]] == ["PILOT-1"]
+        assert [p["callsign"] for p in seen["ew"]["scenario"]["pilots"]] == ["PILOT-2"]
+        assert [p["callsign"] for p in seen["cmd"]["scenario"]["pilots"]] == ["PILOT-1", "PILOT-2"]
         assert [z["threat"] for z in seen["ew"]["nominal_zones"]] == ["J4"]
         assert seen["ew"]["scenario"]["enemy_threats"] == []
 
@@ -123,22 +126,27 @@ def test_each_role_sees_its_own_part(two_missions: Scenario) -> None:
 
 
 def test_plans_reach_the_clients(scenario: Scenario) -> None:
-    def inline(scenario: Scenario, grids: dict[str, Grid]) -> Replanner:
+    def inline(scenario: Scenario) -> Replanner:
         class Inline:
             def request(
                 self,
-                mission: str,
+                mission: Mission,
+                grid: Grid,
                 revision: int,
                 cuts: list[Cut],
                 earliest_s: float,
                 done: PlanDone,
             ) -> None:
-                m = scenario.mission(mission)
-                assert m is not None
-                done(revision, plan_mission(scenario, m, grids[mission], cuts, earliest_s))
+                done(revision, plan_mission(scenario, mission, grid, cuts, earliest_s))
 
             def request_fallback(
-                self, mission: str, revision: int, position: Position, now_s: float, done: PlanDone
+                self,
+                mission: Mission,
+                grid: Grid,
+                revision: int,
+                position: Position,
+                now_s: float,
+                done: PlanDone,
             ) -> None:
                 raise AssertionError("no flight in this test")
 
@@ -209,3 +217,48 @@ def test_rf_probe_endpoint(scenario: Scenario) -> None:
     assert "p_pilot_dbm" in data
     assert "p_jammer_dbm" in data
     assert "details" in data
+
+
+def test_a_requested_mission_resyncs_who_sees_it(two_missions: Scenario) -> None:
+    """PILOT-1 starts with no mission: its request brings M1's jammer into its view."""
+    data = two_missions.model_dump(mode="json")
+    m1 = data["missions"].pop(0)
+    client = TestClient(create_app(Scenario.model_validate(data), clock_factor=20, cell_m=100))
+    with (
+        client.websocket_connect("/ws?callsign=PILOT-1") as pilot,
+        client.websocket_connect("/ws?callsign=PILOT-2") as other,
+        client.websocket_connect("/ws?callsign=EW-J3") as operator,
+    ):
+        before = receive(pilot)["payload"]
+        assert (before["missions"], before["scenario"]["friendly_jammers"]) == ([], [])
+        assert [p["callsign"] for p in before["scenario"]["pilots"]] == ["PILOT-1"]
+        receive(other), receive(operator)
+
+        request = {"type": "mission.request", "actor": "PILOT-1", "departure_s": 600}
+        pilot.send_json(
+            {"req_id": "r1", "command": request | {k: m1[k] for k in ("launch", "target")}}
+        )
+        created, after, notification, ack = (receive(pilot)["payload"] for _ in range(4))
+        assert created["type"] == "mission.created"
+        assert (created["mission"]["id"], created["mission"]["drone_id"]) == ("M1", "UAV-1")
+        assert after["type"] == "snapshot"
+        assert [m["constraints"]["mission"] for m in after["missions"]] == ["M1"]
+        assert [j["id"] for j in after["scenario"]["friendly_jammers"]] == ["J3"]
+        assert notification["type"] == "notification"
+        assert ack == {"type": "ack", "req_id": "r1"}
+
+        # The operator of J3 sees the new mission; the other pilot does not.
+        assert [receive(operator)["payload"]["type"] for _ in range(2)] == [
+            "mission.created",
+            "snapshot",
+        ]
+        other.send_json({"req_id": "r2", "command": {"type": "clock.set", "actor": "PILOT-2"}})
+        assert receive(other)["payload"]["type"] == "clock"
+
+
+def test_rf_endpoints_without_any_mission(scenario: Scenario) -> None:
+    data = scenario.model_dump(mode="json")
+    data["missions"] = []
+    client = TestClient(create_app(Scenario.model_validate(data), clock_factor=20, cell_m=100))
+    assert client.get("/api/rf/coverage").status_code == 200
+    assert client.get("/api/rf/probe?lat=48.145&lon=11.55").status_code == 404

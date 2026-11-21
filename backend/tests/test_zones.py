@@ -87,7 +87,7 @@ def test_demo_zones(scenario: Scenario) -> None:
 
 def test_jammer_off_the_mission_band_has_no_zone(scenario: Scenario) -> None:
     data = scenario.model_dump(mode="json")
-    data["missions"][0]["band"] = "900MHz"
+    data["missions"][0]["band"] = data["pilots"][0]["drone"]["band"] = "900MHz"
     zones = mission_zones(Scenario.model_validate(data))
     assert [z.threat for z in zones] == ["R1"]
 

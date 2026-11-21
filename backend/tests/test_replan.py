@@ -3,22 +3,30 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from corridor.domain.commands import CancelCut, ConfirmCut, LaunchMission, ScheduleCut, SetClock
+from corridor.domain.commands import (
+    CancelCut,
+    ConfirmCut,
+    LaunchMission,
+    RequestMission,
+    ScheduleCut,
+    SetClock,
+)
 from corridor.domain.events import (
     CutScheduled,
     Event,
+    MissionCreated,
     Notification,
     PlanMetrics,
     PlanUpdated,
     RoutePoint,
 )
-from corridor.domain.geo import Position
+from corridor.domain.geo import Grid, Position
 from corridor.domain.planner.plan import MissionPlan
-from corridor.domain.scenario import Scenario
+from corridor.domain.scenario import Mission, Scenario
 from corridor.domain.state import Cut
-from corridor.domain.zones import constraints_by_mission
+from corridor.domain.zones import mission_constraints
 from corridor.engine.clock import SimClock
-from corridor.engine.engine import PLAN_LEAD_WALL_S, Engine
+from corridor.engine.engine import PLAN_LEAD_WALL_S, CommandRejected, Engine
 from corridor.engine.replan import PlanDone, ProcessReplanner
 
 EW = "EW-OFFICER"
@@ -41,16 +49,23 @@ class FakeReplanner:
 
     def request(
         self,
-        mission: str,
+        mission: Mission,
+        grid: Grid,
         revision: int,
         cuts: list[Cut],
         earliest_departure_s: float,
         done: PlanDone,
     ) -> None:
-        self.requests.append(Request(mission, revision, cuts, earliest_departure_s, done))
+        self.requests.append(Request(mission.id, revision, cuts, earliest_departure_s, done))
 
     def request_fallback(
-        self, mission: str, revision: int, position: Position, now_s: float, done: PlanDone
+        self,
+        mission: Mission,
+        grid: Grid,
+        revision: int,
+        position: Position,
+        now_s: float,
+        done: PlanDone,
     ) -> None:
         raise AssertionError("no flight in these tests")
 
@@ -82,8 +97,7 @@ def wall() -> list[float]:
 
 
 def make_engine(scenario: Scenario, replanner: FakeReplanner, wall: list[float]) -> Engine:
-    constraints = constraints_by_mission(scenario, 100)
-    return Engine(scenario, constraints, SimClock(20, wall=lambda: wall[0]), replanner)
+    return Engine(scenario, 100, SimClock(20, wall=lambda: wall[0]), replanner)
 
 
 @pytest.fixture
@@ -183,10 +197,11 @@ def test_process_replanner_runs_the_planner(scenario: Scenario) -> None:
     async def run() -> tuple[int, MissionPlan | None]:
         loop = asyncio.get_running_loop()
         result: asyncio.Future[tuple[int, MissionPlan | None]] = loop.create_future()
-        grids = {m: c.grid for m, c in constraints_by_mission(scenario, 100).items()}
-        replanner = ProcessReplanner(scenario, grids)
+        m1 = scenario.missions[0]
+        grid = mission_constraints(scenario, m1, 100).grid
+        replanner = ProcessReplanner(scenario)
         try:
-            replanner.request("M1", 7, [], 0.0, lambda r, p: result.set_result((r, p)))
+            replanner.request(m1, grid, 7, [], 0.0, lambda r, p: result.set_result((r, p)))
             return await asyncio.wait_for(result, timeout=30)
         finally:
             replanner.close()
@@ -232,3 +247,56 @@ def test_plans_of_each_mission_are_kept_apart(
         ("M2", 1),
     ]
     assert engine.missions["M2"].plan is not None
+
+
+def request_mission(engine: Engine, pilot: str) -> MissionCreated:
+    m1 = engine.scenario.missions[0]
+    command = RequestMission(actor=pilot, launch=m1.launch, target=m1.target, departure_s=600)
+    created = engine.submit(command)[0]
+    assert isinstance(created, MissionCreated)
+    return created
+
+
+def test_a_pilot_request_creates_a_mission_and_plans_it(
+    two_missions: Scenario, replanner: FakeReplanner, wall: list[float]
+) -> None:
+    engine = make_engine(two_missions, replanner, wall)
+    published: list[Event] = []
+    engine.subscribe(published.append)
+    first = request_mission(engine, "PILOT-1").mission
+    second = request_mission(engine, "PILOT-1").mission
+
+    # M1 and M2 come from the file: new ids skip them. Drone fields come from the pilot.
+    assert (first.id, second.id) == ("M3", "M4")
+    assert (first.drone_id, first.band, first.departure_s) == ("UAV-1", "2.4GHz", 600)
+    assert engine.scenario.mission("M4") == second
+    assert engine.state.missions["M3"] == "planned"
+    assert engine.missions["M3"].constraints.jammers == ["J3"]
+    assert [(r.mission, r.revision) for r in replanner.requests] == [("M3", 1), ("M4", 1)]
+    assert any(isinstance(e, Notification) and e.to == "PILOT-1" for e in published)
+
+    replanner.requests[0].done(1, stub_plan())
+    assert engine.missions["M3"].plan is not None
+
+
+@pytest.mark.parametrize("actor", ["CMD", "EW-J3", "NOBODY"])
+def test_only_a_pilot_requests_a_mission(
+    two_missions: Scenario, replanner: FakeReplanner, wall: list[float], actor: str
+) -> None:
+    engine = make_engine(two_missions, replanner, wall)
+    with pytest.raises(CommandRejected, match="only a pilot"):
+        request_mission(engine, actor)
+    assert set(engine.missions) == {"M1", "M2"}
+
+
+def test_a_request_that_gives_no_zones_leaves_the_state_unchanged(
+    two_missions: Scenario, replanner: FakeReplanner, wall: list[float]
+) -> None:
+    engine = make_engine(two_missions, replanner, wall)
+    j3 = engine.scenario.friendly_jammers[0].pos
+    command = RequestMission(actor="PILOT-1", launch=j3, target=j3, departure_s=600)
+    with pytest.raises(CommandRejected, match="jammer at the pilot position"):
+        engine.submit(command)
+    assert [m.id for m in engine.scenario.missions] == ["M1", "M2"]
+    assert set(engine.missions) == set(engine.state.missions) == {"M1", "M2"}
+    assert replanner.requests == []

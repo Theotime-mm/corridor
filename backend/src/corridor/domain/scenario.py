@@ -9,12 +9,16 @@ every direction. A jammer only matters to the mission if its ``bands`` contain t
 except during cuts. ``cuts`` in the file are cuts already scheduled at start; they still need
 the operator's confirmation, like any other cut.
 
-Several missions share the same jammers, threats and cuts. Each mission has its own pilot, so
-its own zones (``corridor.domain.zones.mission_constraints``). ``reference_link`` gives every
-jammer a mission-independent footprint for the command view (``nominal_zones``).
+Several missions share the same jammers, threats and cuts. Each mission has its own pilot
+position, so its own zones (``corridor.domain.zones.mission_constraints``). ``reference_link``
+gives every jammer a mission-independent footprint for the command view (``nominal_zones``).
 
-Every callsign has one role: the command post, the pilot of one mission or the operator of one
-friendly jammer (``Scenario.role_of``).
+``pilots`` lists the pilots and their drone. A pilot may fly several missions; most are
+requested at runtime (``mission.request``), the file only holds those known at start. A mission
+in the file names its pilot and takes the drone fields from it (``Pilot.mission``).
+
+Every callsign has one role: the command post, a pilot or the operator of friendly jammers
+(``Scenario.role_of``).
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ import itertools
 from collections import Counter
 from datetime import timedelta
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import AwareDatetime, Field, model_validator
 
@@ -106,7 +110,34 @@ class EnemyJammer(Model):
 EnemyThreat = Annotated[EnemyRadar | EnemyJammer, Field(discriminator="type")]
 
 
+class Drone(Model):
+    id: str
+    band: str
+    link_eirp_w: float = Field(gt=0, description="EIRP of the pilot's control link, watts.")
+    cruise_speed_mps: float = Field(gt=0)
+    battery_max_s: float = Field(gt=0, description="Flight time on a full battery.")
+
+
+class Pilot(Model):
+    callsign: str
+    drone: Drone
+
+    def mission(
+        self, mission_id: str, launch: Position, target: Position, departure_s: float
+    ) -> Mission:
+        return Mission(
+            id=mission_id,
+            pilot_callsign=self.callsign,
+            launch=launch,
+            target=target,
+            departure_s=departure_s,
+            **_drone_fields(self.drone),
+        )
+
+
 class Mission(Model):
+    """Drone fields are copied from the pilot's drone, so a mission stands on its own."""
+
     id: str
     drone_id: str
     pilot_callsign: str = Field(description="The pilot stands at the launch point.")
@@ -138,7 +169,27 @@ class Scenario(Model):
     command_callsign: str = Field(description="Callsign of the command post, which sees all.")
     friendly_jammers: list[FriendlyJammer]
     enemy_threats: list[EnemyThreat] = Field(default_factory=list)
-    missions: list[Mission] = Field(min_length=1)
+    pilots: list[Pilot] = Field(min_length=1)
+    missions: list[Mission] = Field(
+        default_factory=list,
+        description="Missions known at start. In the file, drone fields may be left out.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drone_fields_from_pilot(cls, data: Any) -> Any:
+        """Fill the drone fields of each file mission from its pilot."""
+        if not isinstance(data, dict):
+            return data
+        pilots = {p.get("callsign"): p for p in data.get("pilots", []) if isinstance(p, dict)}
+        missions = []
+        for mission in data.get("missions", []):
+            pilot = pilots.get(mission.get("pilot_callsign")) if isinstance(mission, dict) else None
+            drone = pilot.get("drone") if pilot else None
+            if isinstance(drone, dict):
+                mission = {**_drone_fields(Drone.model_validate(drone)), **mission}
+            missions.append(mission)
+        return {**data, "missions": missions}
 
     @model_validator(mode="after")
     def _unique_ids(self) -> Self:
@@ -150,16 +201,27 @@ class Scenario(Model):
                 *(m.id for m in self.missions),
             ],
         )
-        _no_duplicates("drones", [m.drone_id for m in self.missions])
+        _no_duplicates("drones", [p.drone.id for p in self.pilots])
         _no_duplicates(
             "callsigns",
             [
                 self.command_callsign,
-                *(m.pilot_callsign for m in self.missions),
+                *(p.callsign for p in self.pilots),
                 # An operator may run several jammers: one callsign each, not per jammer.
                 *{j.operator_callsign for j in self.friendly_jammers},
             ],
         )
+        return self
+
+    @model_validator(mode="after")
+    def _missions_fly_their_pilot_drone(self) -> Self:
+        for mission in self.missions:
+            pilot = self.pilot(mission.pilot_callsign)
+            if pilot is None:
+                raise ValueError(f"{mission.id}: unknown pilot {mission.pilot_callsign}")
+            drone = _drone_fields(pilot.drone)
+            if any(getattr(mission, k) != v for k, v in drone.items()):
+                raise ValueError(f"{mission.id}: drone fields differ from {pilot.callsign}'s drone")
         return self
 
     def friendly_jammer(self, jammer_id: str) -> FriendlyJammer | None:
@@ -168,11 +230,14 @@ class Scenario(Model):
     def mission(self, mission_id: str) -> Mission | None:
         return next((m for m in self.missions if m.id == mission_id), None)
 
+    def pilot(self, callsign: str) -> Pilot | None:
+        return next((p for p in self.pilots if p.callsign == callsign), None)
+
     def role_of(self, callsign: str) -> Role | None:
         """Role of ``callsign``; None if the scenario does not know it."""
         if callsign == self.command_callsign:
             return "command"
-        if any(m.pilot_callsign == callsign for m in self.missions):
+        if self.pilot(callsign) is not None:
             return "pilot"
         if any(j.operator_callsign == callsign for j in self.friendly_jammers):
             return "operator"
@@ -181,6 +246,17 @@ class Scenario(Model):
     def clock_label(self, t: float) -> str:
         """Simulated time as wall-clock ``HH:MM:SS``, for human-facing text."""
         return (self.start_time + timedelta(seconds=t)).strftime("%H:%M:%S")
+
+
+def _drone_fields(drone: Drone) -> dict[str, Any]:
+    """The fields of ``Mission`` that come from the drone."""
+    return {
+        "drone_id": drone.id,
+        "band": drone.band,
+        "link_eirp_w": drone.link_eirp_w,
+        "cruise_speed_mps": drone.cruise_speed_mps,
+        "battery_max_s": drone.battery_max_s,
+    }
 
 
 def _no_duplicates(what: str, values: list[str]) -> None:

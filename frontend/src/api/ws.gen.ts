@@ -6,7 +6,7 @@
  */
 
 export type ReqId = string;
-export type Command = ScheduleCut | CancelCut | ConfirmCut | LaunchMission | SetClock | InjectDelay;
+export type Command = ScheduleCut | CancelCut | ConfirmCut | RequestMission | LaunchMission | SetClock | InjectDelay;
 export type Type = "cut.schedule";
 export type Actor = string;
 export type Jammer = string;
@@ -22,15 +22,23 @@ export type Cut = string;
 export type Type2 = "cut.confirm";
 export type Actor2 = string;
 export type Cut1 = string;
-export type Type3 = "mission.launch";
+export type Type3 = "mission.request";
 export type Actor3 = string;
-export type Mission1 = string;
-export type Type4 = "clock.set";
+export type Lat = number;
+export type Lon = number;
+/**
+ * Earliest departure; one in the past means as soon as possible.
+ */
+export type DepartureS = number;
+export type Type4 = "mission.launch";
 export type Actor4 = string;
+export type Mission1 = string;
+export type Type5 = "clock.set";
+export type Actor5 = string;
 export type Factor = number | null;
 export type Paused = boolean | null;
-export type Type5 = "inject.delay";
-export type Actor5 = string;
+export type Type6 = "inject.delay";
+export type Actor6 = string;
 export type Mission2 = string;
 export type DelayS = number;
 export type Seq = number;
@@ -41,6 +49,7 @@ export type Payload =
       | CutCancelled
       | CutConfirmed
       | ClockChanged
+      | MissionCreated
       | MissionStatusChanged
       | Notification
       | PlanUpdated
@@ -48,7 +57,7 @@ export type Payload =
       | JammerRestarted
     )
   | (Snapshot | Ack | Error);
-export type Type6 = "cut.scheduled";
+export type Type7 = "cut.scheduled";
 export type Id = string;
 export type Jammer1 = string;
 export type StartS1 = number;
@@ -59,19 +68,40 @@ export type RequestedBy = string;
  * Mission the cut was asked for; None: from the scenario.
  */
 export type RequestedFor = string | null;
-export type Type7 = "cut.cancelled";
-export type Type8 = "cut.confirmed";
-export type Type9 = "clock";
+export type Type8 = "cut.cancelled";
+export type Type9 = "cut.confirmed";
+export type Type10 = "clock";
 export type SimTimeS1 = number;
 /**
  * Simulated seconds per wall-clock second.
  */
 export type Factor1 = number;
 export type Paused1 = boolean;
-export type Type10 = "mission.status";
-export type Mission3 = string;
+export type Type11 = "mission.created";
+export type Id1 = string;
+export type DroneId = string;
+/**
+ * The pilot stands at the launch point.
+ */
+export type PilotCallsign = string;
+export type Band = string;
+/**
+ * EIRP of the pilot's control link, watts.
+ */
+export type LinkEirpW = number;
+export type CruiseSpeedMps = number;
+/**
+ * Flight time on a full battery.
+ */
+export type BatteryMaxS = number;
+/**
+ * Earliest departure.
+ */
+export type DepartureS1 = number;
+export type Type12 = "mission.status";
+export type Mission4 = string;
 export type Status1 = "planned" | "flying" | "arrived";
-export type Type11 = "notification";
+export type Type13 = "notification";
 /**
  * Callsign of the pilot or of a jammer operator.
  */
@@ -79,8 +109,8 @@ export type To = string;
 export type Text = string;
 export type Command1 = "cut.confirm";
 export type Cut4 = string;
-export type Type12 = "plan.updated";
-export type Mission4 = string;
+export type Type14 = "plan.updated";
+export type Mission5 = string;
 /**
  * Grows by one per plan request of this mission.
  */
@@ -102,8 +132,8 @@ export type SavedPct = number;
  * Flight time saved, hover included, ground wait excluded.
  */
 export type SavedS = number;
-export type Lat = number;
-export type Lon = number;
+export type Lat1 = number;
+export type Lon1 = number;
 export type T = number;
 export type Action = "fly" | "hover" | "ground";
 /**
@@ -111,10 +141,8 @@ export type Action = "fly" | "hover" | "ground";
  */
 export type BaselineRoute = RoutePoint[];
 export type OptimisedRoute = RoutePoint[];
-export type Type13 = "drone.state";
-export type Mission5 = string;
-export type Lat1 = number;
-export type Lon1 = number;
+export type Type15 = "drone.state";
+export type Mission6 = string;
 export type Action1 = "fly" | "hover" | "ground";
 /**
  * Of battery_max_s, airborne time so far.
@@ -128,10 +156,10 @@ export type DelayS1 = number;
  * Plan revision of the route being flown.
  */
 export type Revision1 = number;
-export type Type14 = "jammer.restarted";
+export type Type16 = "jammer.restarted";
 export type Jammer2 = string;
 export type Cut5 = string;
-export type Type15 = "snapshot";
+export type Type17 = "snapshot";
 export type Callsign = string;
 export type Role = "command" | "pilot" | "operator";
 /**
@@ -154,7 +182,7 @@ export type RangeM = number;
  * Callsign of the command post, which sees all.
  */
 export type CommandCallsign = string;
-export type Id1 = string;
+export type Id2 = string;
 export type OperatorCallsign = string;
 /**
  * Effective isotropic radiated power, watts; in the main beam if `antenna`.
@@ -180,8 +208,8 @@ export type StartS2 = number;
 export type EndS2 = number;
 export type Cuts = PlannedCut[];
 export type FriendlyJammers = FriendlyJammer[];
-export type Type16 = "radar";
-export type Id2 = string;
+export type Type18 = "radar";
+export type Id3 = string;
 /**
  * Estimated detection range.
  */
@@ -190,8 +218,8 @@ export type RadiusM = number;
  * Uncertainty on `pos`, metres: the zone covers every position this close.
  */
 export type PositionErrorM = number;
-export type Type17 = "jammer";
-export type Id3 = string;
+export type Type19 = "jammer";
+export type Id4 = string;
 /**
  * Estimated EIRP, watts.
  */
@@ -208,27 +236,23 @@ export type EnemyThreats = (EnemyRadar | EnemyJammer)[];
 /**
  * @minItems 1
  */
-export type Missions = [Mission6, ...Mission6[]];
-export type Id4 = string;
-export type DroneId = string;
-/**
- * The pilot stands at the launch point.
- */
-export type PilotCallsign = string;
-export type Band = string;
+export type Pilots = [Pilot, ...Pilot[]];
+export type Callsign1 = string;
+export type Id5 = string;
+export type Band1 = string;
 /**
  * EIRP of the pilot's control link, watts.
  */
-export type LinkEirpW = number;
-export type CruiseSpeedMps = number;
+export type LinkEirpW1 = number;
+export type CruiseSpeedMps1 = number;
 /**
  * Flight time on a full battery.
  */
-export type BatteryMaxS = number;
+export type BatteryMaxS1 = number;
 /**
- * Earliest departure.
+ * Missions known at start. In the file, drone fields may be left out.
  */
-export type DepartureS = number;
+export type Missions = Mission3[];
 /**
  * Id of the jammer or radar.
  */
@@ -241,7 +265,7 @@ export type Forbidden = "inside" | "outside";
 /**
  * Closed boundary; the first vertex is not repeated.
  */
-export type Ring = Position[];
+export type Ring = Position1[];
 /**
  * Mission-independent footprints, see domain.zones. None for a pilot.
  */
@@ -268,9 +292,9 @@ export type Missions1 = MissionView[];
  * Cuts of the jammers in view.
  */
 export type Cuts1 = Cut2[];
-export type Type18 = "ack";
+export type Type20 = "ack";
 export type ReqId1 = string;
-export type Type19 = "error";
+export type Type21 = "error";
 /**
  * None when the message could not be parsed.
  */
@@ -323,14 +347,42 @@ export interface ConfirmCut {
   cut: Cut1;
 }
 /**
+ * A pilot asks for a route: a new mission with its drone, planned right away.
+ *
+ * This interface was referenced by `CorridorWs`'s JSON-Schema
+ * via the `definition` "RequestMission".
+ */
+export interface RequestMission {
+  type: Type3;
+  actor: Actor3;
+  launch: Position;
+  target: Position1;
+  departure_s: DepartureS;
+}
+/**
+ * Where the pilot stands and the drone takes off.
+ */
+export interface Position {
+  lat: Lat;
+  lon: Lon;
+}
+/**
+ * This interface was referenced by `CorridorWs`'s JSON-Schema
+ * via the `definition` "Position".
+ */
+export interface Position1 {
+  lat: Lat;
+  lon: Lon;
+}
+/**
  * Only the mission pilot or the command post may launch.
  *
  * This interface was referenced by `CorridorWs`'s JSON-Schema
  * via the `definition` "LaunchMission".
  */
 export interface LaunchMission {
-  type: Type3;
-  actor: Actor3;
+  type: Type4;
+  actor: Actor4;
   mission: Mission1;
 }
 /**
@@ -338,8 +390,8 @@ export interface LaunchMission {
  * via the `definition` "SetClock".
  */
 export interface SetClock {
-  type: Type4;
-  actor: Actor4;
+  type: Type5;
+  actor: Actor5;
   factor?: Factor;
   paused?: Paused;
 }
@@ -350,8 +402,8 @@ export interface SetClock {
  * via the `definition` "InjectDelay".
  */
 export interface InjectDelay {
-  type: Type5;
-  actor: Actor5;
+  type: Type6;
+  actor: Actor6;
   mission: Mission2;
   delay_s: DelayS;
 }
@@ -369,7 +421,7 @@ export interface ServerMessage {
  * via the `definition` "CutScheduled".
  */
 export interface CutScheduled {
-  type: Type6;
+  type: Type7;
   cut: Cut2;
 }
 /**
@@ -394,7 +446,7 @@ export interface Cut2 {
  * via the `definition` "CutCancelled".
  */
 export interface CutCancelled {
-  type: Type7;
+  type: Type8;
   cut: Cut3;
 }
 /**
@@ -416,7 +468,7 @@ export interface Cut3 {
  * via the `definition` "CutConfirmed".
  */
 export interface CutConfirmed {
-  type: Type8;
+  type: Type9;
   cut: Cut2;
 }
 /**
@@ -424,7 +476,7 @@ export interface CutConfirmed {
  * via the `definition` "ClockChanged".
  */
 export interface ClockChanged {
-  type: Type9;
+  type: Type10;
   clock: ClockState;
 }
 /**
@@ -437,12 +489,41 @@ export interface ClockState {
   paused: Paused1;
 }
 /**
+ * A pilot's request became a mission. Clients that see it get a new snapshot right after:
+ * the mission may bring jammers and threats into their view.
+ *
+ * This interface was referenced by `CorridorWs`'s JSON-Schema
+ * via the `definition` "MissionCreated".
+ */
+export interface MissionCreated {
+  type: Type11;
+  mission: Mission3;
+}
+/**
+ * Drone fields are copied from the pilot's drone, so a mission stands on its own.
+ *
+ * This interface was referenced by `CorridorWs`'s JSON-Schema
+ * via the `definition` "Mission".
+ */
+export interface Mission3 {
+  id: Id1;
+  drone_id: DroneId;
+  pilot_callsign: PilotCallsign;
+  launch: Position1;
+  target: Position1;
+  band: Band;
+  link_eirp_w: LinkEirpW;
+  cruise_speed_mps: CruiseSpeedMps;
+  battery_max_s: BatteryMaxS;
+  departure_s: DepartureS1;
+}
+/**
  * This interface was referenced by `CorridorWs`'s JSON-Schema
  * via the `definition` "MissionStatusChanged".
  */
 export interface MissionStatusChanged {
-  type: Type10;
-  mission: Mission3;
+  type: Type12;
+  mission: Mission4;
   status: Status1;
 }
 /**
@@ -450,7 +531,7 @@ export interface MissionStatusChanged {
  * via the `definition` "Notification".
  */
 export interface Notification {
-  type: Type11;
+  type: Type13;
   to: To;
   text: Text;
   action: NotificationAction | null;
@@ -472,8 +553,8 @@ export interface NotificationAction {
  * via the `definition` "PlanUpdated".
  */
 export interface PlanUpdated {
-  type: Type12;
-  mission: Mission4;
+  type: Type14;
+  mission: Mission5;
   revision: Revision;
   status: Status2;
   metrics: PlanMetrics;
@@ -497,8 +578,8 @@ export interface PlanMetrics {
  * via the `definition` "RoutePoint".
  */
 export interface RoutePoint {
-  lat: Lat;
-  lon: Lon;
+  lat: Lat1;
+  lon: Lon1;
   t: T;
   action: Action;
 }
@@ -509,21 +590,13 @@ export interface RoutePoint {
  * via the `definition` "DroneState".
  */
 export interface DroneState {
-  type: Type13;
-  mission: Mission5;
-  position: Position;
+  type: Type15;
+  mission: Mission6;
+  position: Position1;
   action: Action1;
   battery_used_pct: BatteryUsedPct;
   delay_s: DelayS1;
   revision: Revision1;
-}
-/**
- * This interface was referenced by `CorridorWs`'s JSON-Schema
- * via the `definition` "Position".
- */
-export interface Position {
-  lat: Lat1;
-  lon: Lon1;
 }
 /**
  * A confirmed cut ended: the jammer is back on.
@@ -532,7 +605,7 @@ export interface Position {
  * via the `definition` "JammerRestarted".
  */
 export interface JammerRestarted {
-  type: Type14;
+  type: Type16;
   jammer: Jammer2;
   cut: Cut5;
 }
@@ -543,7 +616,7 @@ export interface JammerRestarted {
  * via the `definition` "Snapshot".
  */
 export interface Snapshot {
-  type: Type15;
+  type: Type17;
   viewer: Viewer;
   scenario: Scenario;
   nominal_zones: NominalZones;
@@ -571,6 +644,7 @@ export interface Scenario {
   command_callsign: CommandCallsign;
   friendly_jammers: FriendlyJammers;
   enemy_threats: EnemyThreats;
+  pilots: Pilots;
   missions: Missions;
 }
 /**
@@ -588,9 +662,9 @@ export interface ReferenceLink {
  * via the `definition` "FriendlyJammer".
  */
 export interface FriendlyJammer {
-  id: Id1;
+  id: Id2;
   operator_callsign: OperatorCallsign;
-  pos: Position;
+  pos: Position1;
   eirp_w: EirpW1;
   bands: Bands;
   /**
@@ -625,9 +699,9 @@ export interface PlannedCut {
  * via the `definition` "EnemyRadar".
  */
 export interface EnemyRadar {
-  type: Type16;
-  id: Id2;
-  pos: Position;
+  type: Type18;
+  id: Id3;
+  pos: Position1;
   radius_m: RadiusM;
   position_error_m: PositionErrorM;
 }
@@ -636,28 +710,31 @@ export interface EnemyRadar {
  * via the `definition` "EnemyJammer".
  */
 export interface EnemyJammer {
-  type: Type17;
-  id: Id3;
-  pos: Position;
+  type: Type19;
+  id: Id4;
+  pos: Position1;
   eirp_w: EirpW2;
   bands: Bands1;
   position_error_m: PositionErrorM1;
 }
 /**
  * This interface was referenced by `CorridorWs`'s JSON-Schema
- * via the `definition` "Mission".
+ * via the `definition` "Pilot".
  */
-export interface Mission6 {
-  id: Id4;
-  drone_id: DroneId;
-  pilot_callsign: PilotCallsign;
-  launch: Position;
-  target: Position;
-  band: Band;
-  link_eirp_w: LinkEirpW;
-  cruise_speed_mps: CruiseSpeedMps;
-  battery_max_s: BatteryMaxS;
-  departure_s: DepartureS;
+export interface Pilot {
+  callsign: Callsign1;
+  drone: Drone;
+}
+/**
+ * This interface was referenced by `CorridorWs`'s JSON-Schema
+ * via the `definition` "Drone".
+ */
+export interface Drone {
+  id: Id5;
+  band: Band1;
+  link_eirp_w: LinkEirpW1;
+  cruise_speed_mps: CruiseSpeedMps1;
+  battery_max_s: BatteryMaxS1;
 }
 /**
  * This interface was referenced by `CorridorWs`'s JSON-Schema
@@ -699,7 +776,7 @@ export interface MissionConstraints {
  * Planning grid of the mission.
  */
 export interface Grid {
-  origin: Position1;
+  origin: Position2;
   cell_m: CellM;
   cols: Cols;
   rows: Rows;
@@ -707,16 +784,16 @@ export interface Grid {
 /**
  * South-west corner of the grid.
  */
-export interface Position1 {
-  lat: Lat1;
-  lon: Lon1;
+export interface Position2 {
+  lat: Lat;
+  lon: Lon;
 }
 /**
  * This interface was referenced by `CorridorWs`'s JSON-Schema
  * via the `definition` "Ack".
  */
 export interface Ack {
-  type: Type18;
+  type: Type20;
   req_id: ReqId1;
 }
 /**
@@ -724,7 +801,7 @@ export interface Ack {
  * via the `definition` "Error".
  */
 export interface Error {
-  type: Type19;
+  type: Type21;
   req_id: ReqId2;
   reason: Reason;
 }
@@ -733,7 +810,7 @@ export interface Error {
  * via the `definition` "Grid".
  */
 export interface Grid1 {
-  origin: Position1;
+  origin: Position2;
   cell_m: CellM;
   cols: Cols;
   rows: Rows;
@@ -762,5 +839,6 @@ export interface Scenario1 {
   command_callsign: CommandCallsign;
   friendly_jammers: FriendlyJammers;
   enemy_threats: EnemyThreats;
+  pilots: Pilots;
   missions: Missions;
 }

@@ -28,9 +28,12 @@ PlanDone = Callable[[int, MissionPlan | None], None]
 
 
 class Replanner(Protocol):
+    """Missions come with their grid: they may be created after the replanner."""
+
     def request(
         self,
-        mission: str,
+        mission: Mission,
+        grid: Grid,
         revision: int,
         cuts: list[Cut],
         earliest_departure_s: float,
@@ -38,7 +41,13 @@ class Replanner(Protocol):
     ) -> None: ...
 
     def request_fallback(
-        self, mission: str, revision: int, position: Position, now_s: float, done: PlanDone
+        self,
+        mission: Mission,
+        grid: Grid,
+        revision: int,
+        position: Position,
+        now_s: float,
+        done: PlanDone,
     ) -> None: ...
 
     def close(self) -> None: ...
@@ -52,10 +61,8 @@ class ProcessReplanner:
     handlers, ignore SIGTERM and outlive the server.
     """
 
-    def __init__(self, scenario: Scenario, grids: dict[str, Grid]) -> None:
-        """``grids``: planning grid of each mission, by mission id."""
+    def __init__(self, scenario: Scenario) -> None:
         self._scenario = scenario
-        self._grids = grids
         self._pool = ProcessPoolExecutor(
             max_workers=1, mp_context=multiprocessing.get_context("spawn")
         )
@@ -63,40 +70,29 @@ class ProcessReplanner:
 
     def request(
         self,
-        mission: str,
+        mission: Mission,
+        grid: Grid,
         revision: int,
         cuts: list[Cut],
         earliest_departure_s: float,
         done: PlanDone,
     ) -> None:
         future = self._pool.submit(
-            plan_mission,
-            self._scenario,
-            self._mission(mission),
-            self._grids[mission],
-            cuts,
-            earliest_departure_s,
+            plan_mission, self._scenario, mission, grid, cuts, earliest_departure_s
         )
-        self._submit(mission, revision, done, future)
+        self._submit(mission.id, revision, done, future)
 
     def request_fallback(
-        self, mission: str, revision: int, position: Position, now_s: float, done: PlanDone
+        self,
+        mission: Mission,
+        grid: Grid,
+        revision: int,
+        position: Position,
+        now_s: float,
+        done: PlanDone,
     ) -> None:
-        future = self._pool.submit(
-            plan_fallback,
-            self._scenario,
-            self._mission(mission),
-            self._grids[mission],
-            position,
-            now_s,
-        )
-        self._submit(mission, revision, done, future)
-
-    def _mission(self, mission_id: str) -> Mission:
-        mission = self._scenario.mission(mission_id)
-        if mission is None:
-            raise KeyError(mission_id)
-        return mission
+        future = self._pool.submit(plan_fallback, self._scenario, mission, grid, position, now_s)
+        self._submit(mission.id, revision, done, future)
 
     def _submit(
         self, mission: str, revision: int, done: PlanDone, future: Future[MissionPlan | None]
