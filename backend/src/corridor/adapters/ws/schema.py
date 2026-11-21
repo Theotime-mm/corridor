@@ -1,9 +1,10 @@
 """``corridor-schema``: print the JSON Schema of the WebSocket protocol.
 
 The front end generates its TypeScript types from it. The committed copy lives in
-``schema/ws.schema.json`` and a test fails when it is out of date:
+``schema/ws.schema.json`` at the repository root, and a test fails when it is out of date.
+From ``backend/``:
 
-    uv run corridor-schema > schema/ws.schema.json
+    uv run corridor-schema > ../schema/ws.schema.json
 """
 
 from __future__ import annotations

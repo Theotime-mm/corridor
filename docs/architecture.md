@@ -29,7 +29,7 @@ Kit) comes later as one more adapter; the OTS stack in `infra/ots` is ready when
 What exists today:
 
 ```
-src/corridor/
+backend/src/corridor/
   domain/
     model.py      pydantic base class shared by every model that crosses a boundary
     geo.py        Position, LocalFrame (lat/lon <-> metres), Grid (cell lookup, covering grid)
@@ -49,8 +49,8 @@ src/corridor/
       server.py   corridor-server entry point
       schema.py   corridor-schema: JSON Schema export
   tak/            CoT client and encoders, unchanged; moves to adapters/tak with the TAK adapter
-scenarios/demo.json   demo scenario (J3 between pilot and target, radar to the side, enemy jammer)
-schema/ws.schema.json generated protocol schema, consumed by the front end
+backend/scenarios/demo.json   demo scenario (J3 between pilot and target, radar to the side, enemy jammer)
+schema/ws.schema.json         generated protocol schema (repository root), consumed by the front end
 ```
 
 Still to write, by whoever owns the piece:
@@ -88,7 +88,7 @@ Two kinds of data, kept apart:
 | | Scenario | World state |
 |---|---|---|
 | Content | start time, friendly jammers (with optional initial cuts), enemy threats, the mission | cuts (scheduled or confirmed), mission status; later drone position and injected enemy threats |
-| Source | `scenarios/*.json`, written by hand for the demo | built by the engine from the scenario, then changed by commands |
+| Source | `backend/scenarios/*.json`, written by hand for the demo | built by the engine from the scenario, then changed by commands |
 | Lifetime | static during a run | in memory; restart the server to reset |
 
 - Times are simulated seconds from the scenario `start_time` (for example 14:00:00Z); every
@@ -233,7 +233,7 @@ lies on the forbidden side of:
 - an enemy jammer zone, at all times;
 - a radar disc (hard ban, or a cost penalty if we want the planner to graze it).
 
-**Demo calibration, for the jury.** `scenarios/demo.json` uses a 0 dB threshold, a control link
+**Demo calibration, for the jury.** `backend/scenarios/demo.json` uses a 0 dB threshold, a control link
 of 10 W EIRP toward the operating area (for example 1 W behind a 10 dBi ground antenna, assuming
 the drone stays in its main beam), a 2 W friendly jammer and a 1 W enemy jammer. J3 then denies
 a 2.2 km radius disc centred 1 km beyond it. The radar disc overlaps it, so there is no gap
@@ -266,7 +266,7 @@ requested is dropped. The result re-enters the engine on the event loop thread, 
 
 ## WebSocket protocol
 
-Run the server with `uv run corridor-server` (`--scenario`, `--host`, `--port`,
+Run the server from `backend/` with `uv run corridor-server` (`--scenario`, `--host`, `--port`,
 `--clock-factor`). Endpoint: `ws://127.0.0.1:8000/ws`.
 
 Client to server:
@@ -334,7 +334,7 @@ Server to client:
 | `inject.enemy_threat`, `inject.delay` | to come | demo twists |
 
 **Contract.** `schema/ws.schema.json` is generated from the pydantic models
-(`uv run corridor-schema > schema/ws.schema.json`) and a test fails when it is out of date. Its
+(from `backend/`: `uv run corridor-schema > ../schema/ws.schema.json`) and a test fails when it is out of date. Its
 `client` and `server` properties are the two message types; every `type` field is required, so
 the generated TypeScript unions discriminate on it. For example with `json-schema-to-typescript`
 (not tried yet: check how it renders `Cell`, a two-integer tuple):
