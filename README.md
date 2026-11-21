@@ -106,14 +106,15 @@ Python commands run from `backend/`.
 ```bash
 cd backend
 uv sync
-uv run corridor-server            # ws://127.0.0.1:8000/ws, scenarios/demo.json, clock x20, paused
+uv run corridor-server            # ws://127.0.0.1:8000/ws?callsign=..., scenarios/demo.json, clock x20, paused
 uv run corridor-server --host 0.0.0.0 --port 8000 --clock-factor 30 --cell-m 200 \
   --scenario scenarios/other.json
 uv run corridor-schema > ../schema/ws.schema.json   # after changing a message model
 ```
 
-- On connect a client gets a `snapshot` (scenario, planning grid, zones, clock, cuts, mission
-  status), then every event. A reconnect gets a fresh snapshot.
+- A client connects with its callsign (`/ws?callsign=CMD`, `PILOT-1`, `EW-J3`...). It gets a
+  `snapshot` and the events its role may see (command: everything; pilot: its mission; jammer
+  operator: its jammers and the missions they concern). A reconnect gets a fresh snapshot.
 - The simulation clock starts paused at t = 0; the front starts it with a `clock.set` command.
 - Demo: with the demo powers, J3's zone takes about 300 s to cross. A cut shorter than about
   7 min (crossing + 30 s + 60 s of margins) cannot give the straight route.

@@ -6,7 +6,7 @@ import type { Feature, FeatureCollection } from 'geojson'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import type { Grid, PlanUpdated, Position, RoutePoint, Scenario, Zone } from '../api/protocol'
-import { gridBounds, type ZoneState } from '../domain/view'
+import { boundsOf, gridBounds, type ZoneState } from '../domain/view'
 
 // Draft basemap: online OSM raster tiles. TODO: offline PMTiles extract of the demo area.
 const STYLE: StyleSpecification = {
@@ -52,20 +52,8 @@ export const ROUTE_COLORS: Record<PlanUpdated['status'], string> = {
   fallback: COLORS.fallback,
 }
 
-/** Drone updates arrive about every 500 ms: glide to each one over slightly less. */
-const DRONE_GLIDE_MS = 450
-/** Beyond this jump (new route, reconnect), place the drone instead of gliding. */
-const DRONE_SNAP_M = 2000
-
 type FC = FeatureCollection
 const empty = (): FC => ({ type: 'FeatureCollection', features: [] })
-
-export interface DroneDisplayOpts {
-  glide?: boolean
-  headingDeg?: number | null
-  action?: RoutePoint['action'] | null
-  isLive?: boolean
-}
 
 export interface LayerVisibility {
   zones?: boolean
@@ -76,13 +64,37 @@ export interface LayerVisibility {
   relief?: boolean
 }
 
+export interface Scene {
+  /** Only what this callsign may see. */
+  scenario: Scenario
+  /** Grid of every mission in view; the map fits them all. */
+  grids: Grid[]
+  /** Zones of the selected mission, for its pilot, and its grid (for `forbidden: outside`). */
+  missionGrid: Grid | null
+  missionZones: Zone[]
+  /** Mission-independent footprints (command and operator views). */
+  nominalZones: Zone[]
+}
+
+export interface MissionRoutes {
+  mission: string
+  baseline: RoutePoint[] | null
+  optimised: RoutePoint[] | null
+  /** The selected mission shows its detour too, and stands out. */
+  selected: boolean
+}
+
+export interface DroneMark {
+  mission: string
+  pos: Position
+  selected: boolean
+}
+
 export interface MapView {
-  setScene(scenario: Scenario, grid: Grid, zones: Zone[]): void
+  setScene(scene: Scene): void
   setZoneStates(states: Record<string, ZoneState>): void
-  /** The detour is hidden when it is the planned route itself (status baseline or fallback). */
-  setRoutes(plan: PlanUpdated | null): void
-  /** `glide`: animate from the shown position (live updates); otherwise jump (scrubbing). */
-  setDrone(pos: Position | null, opts?: boolean | DroneDisplayOpts): void
+  setRoutes(routes: MissionRoutes[]): void
+  setDrones(drones: DroneMark[]): void
   setRfCoverage(coverage: FeatureCollection | null): void
   setRfHeatmap(heatmap: FeatureCollection | null): void
   onHover(cb: (pos: Position | null) => void): void
@@ -90,7 +102,7 @@ export interface MapView {
   set3D(enabled: boolean): void
   is3D(): boolean
   fitScene(): void
-  centerOnDrone(): void
+  centerOnDrone(pos?: Position | null): void
   destroy(): void
 }
 
@@ -112,16 +124,12 @@ export function createMapView(container: HTMLElement): MapView {
   let loaded = false
   let is3dMode = false
   const pending: Record<string, FC> = {}
-  let grid: Grid | null = null
-  let zones: Zone[] = []
+  let scene: Scene | null = null
+  let fitted = ''
   let states: Record<string, ZoneState> = {}
   let visibility: Required<LayerVisibility> = { grid: true, baseline: true, zones: true, rf: true, heatmap: false, relief: true }
   const markers: maplibregl.Marker[] = []
-  let droneMarker: maplibregl.Marker | null = null
-  let droneShown: Position | null = null
-  let droneFrame = 0
-  let droneEl: HTMLDivElement | null = null
-  let droneGlyph: HTMLDivElement | null = null
+  const drones = new Map<string, maplibregl.Marker>()
 
   const setData = (source: string, data: FC) => {
     pending[source] = data
@@ -195,7 +203,7 @@ export function createMapView(container: HTMLElement): MapView {
       },
     })
 
-    for (const id of ['grid', 'zones', 'routes', 'rf-coverage', 'rf-heatmap']) {
+    for (const id of ['grid', 'nominal', 'zones', 'routes', 'rf-coverage', 'rf-heatmap']) {
       map.addSource(id, { type: 'geojson', data: pending[id] ?? empty() })
     }
 
@@ -230,7 +238,24 @@ export function createMapView(container: HTMLElement): MapView {
       id: 'grid-line',
       type: 'line',
       source: 'grid',
-      paint: { 'line-color': '#868e96', 'line-width': 1, 'line-dasharray': [4, 4] },
+      paint: {
+        'line-color': '#868e96',
+        'line-width': ['case', ['get', 'selected'], 1.5, 1],
+        'line-opacity': ['case', ['get', 'selected'], 1, 0.4],
+        'line-dasharray': [4, 4],
+      },
+    })
+    map.addLayer({
+      id: 'nominal-fill',
+      type: 'fill',
+      source: 'nominal',
+      paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['*', 0.5, ['get', 'opacity']] },
+    })
+    map.addLayer({
+      id: 'nominal-line',
+      type: 'line',
+      source: 'nominal',
+      paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-dasharray': [3, 2] },
     })
     map.addLayer({
       id: 'rf-coverage-fill',
@@ -268,7 +293,11 @@ export function createMapView(container: HTMLElement): MapView {
       type: 'line',
       source: 'routes',
       filter: ['==', ['get', 'kind'], 'optimised'],
-      paint: { 'line-color': ['get', 'color'], 'line-width': 4 },
+      paint: {
+        'line-color': COLORS.optimised,
+        'line-width': ['case', ['get', 'selected'], 4, 2.5],
+        'line-opacity': ['case', ['get', 'selected'], 1, 0.6],
+      },
     })
     loaded = true
     if (is3dMode) {
@@ -277,8 +306,7 @@ export function createMapView(container: HTMLElement): MapView {
     applyVisibility()
   })
 
-  const renderZones = () => {
-    if (!grid) return
+  const zoneFeatures = (zones: Zone[], outer: number[][] | null): Feature[] => {
     const worldOuter = [
       [-180, -85],
       [180, -85],
@@ -286,36 +314,56 @@ export function createMapView(container: HTMLElement): MapView {
       [-180, 85],
       [-180, -85],
     ]
-    const features: Feature[] = zones.map((z) => {
+    return zones.map((z) => {
       const ring = [...z.ring.map((p) => [p.lon, p.lat]), [z.ring[0].lon, z.ring[0].lat]]
       const { color, opacity } = zoneStyle(z, states[z.threat] ?? 'on')
-      // forbidden "outside": everything but the ring, drawn with world bounds so no rectangular box appears
-      const coordinates = z.forbidden === 'inside' ? [ring] : [worldOuter, ring]
+      // forbidden "outside": everything but the ring
+      const coordinates = z.forbidden === 'outside' ? [outer ?? worldOuter, ring] : [ring]
       return {
         type: 'Feature',
         properties: { threat: z.threat, color, opacity },
         geometry: { type: 'Polygon', coordinates },
       }
     })
-    setData('zones', { type: 'FeatureCollection', features })
+  }
+
+  const renderZones = () => {
+    if (!scene) return
+    const g = scene.missionGrid
+    const outer = g ? [...gridBounds(g), gridBounds(g)[0]] : null
+    setData('zones', { type: 'FeatureCollection', features: zoneFeatures(scene.missionZones, outer) })
+    setData('nominal', { type: 'FeatureCollection', features: zoneFeatures(scene.nominalZones, null) })
   }
 
   return {
-    setScene(scenario, g, zs) {
-      grid = g
-      zones = zs
-      const b = gridBounds(g)
+    setScene(next) {
+      scene = next
+      const { scenario, grids, missionGrid } = next
       setData('grid', {
         type: 'FeatureCollection',
-        features: [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [...b, b[0]] } }],
+        features: grids.map((g) => {
+          const b = gridBounds(g)
+          return {
+            type: 'Feature',
+            properties: { selected: g === missionGrid },
+            geometry: { type: 'LineString', coordinates: [...b, b[0]] },
+          }
+        }),
       })
       renderZones()
-      map.fitBounds([b[0], b[2]], { padding: 30, duration: 0 })
+      // Fit once per set of grids, not on every mission selection.
+      const box = boundsOf(grids)
+      const key = JSON.stringify(box)
+      if (box && key !== fitted) {
+        fitted = key
+        map.fitBounds(box, { padding: 30, duration: 0 })
+      }
 
       markers.splice(0).forEach((m) => m.remove())
-      const m = scenario.mission
-      markers.push(label(map, m.launch, `${m.pilot_callsign} (launch)`, '#4dabf7'))
-      markers.push(label(map, m.target, 'TARGET', '#ffd43b'))
+      for (const m of scenario.missions) {
+        markers.push(label(map, m.launch, `${m.pilot_callsign} (${m.id})`, '#4dabf7'))
+        markers.push(label(map, m.target, `TARGET ${m.id}`, '#ffd43b'))
+      }
       for (const j of scenario.friendly_jammers) markers.push(label(map, j.pos, `${j.id} · ${j.operator_callsign}`, COLORS.friendlyOn))
       for (const t of scenario.enemy_threats) markers.push(label(map, t.pos, t.id, t.type === 'radar' ? COLORS.radar : COLORS.enemy))
     },
@@ -323,18 +371,46 @@ export function createMapView(container: HTMLElement): MapView {
       states = s
       renderZones()
     },
-    setRoutes(plan) {
-      const line = (kind: string, r: RoutePoint[], color: string): Feature[] =>
-        r.length > 1
-          ? [{ type: 'Feature', properties: { kind, color }, geometry: { type: 'LineString', coordinates: r.map((p) => [p.lon, p.lat]) } }]
+    setRoutes(routes) {
+      const line = (kind: string, r: RoutePoint[] | null, mission: string, selected: boolean): Feature[] =>
+        r && r.length > 1
+          ? [{ type: 'Feature', properties: { kind, mission, selected }, geometry: { type: 'LineString', coordinates: r.map((p) => [p.lon, p.lat]) } }]
           : []
-      const features = plan
-        ? [
-            ...(plan.status === 'preview' || plan.status === 'approved' ? line('baseline', plan.baseline_route, COLORS.baseline) : []),
-            ...line('optimised', plan.optimised_route, ROUTE_COLORS[plan.status]),
-          ]
-        : []
+      const features = routes.flatMap((r) => [
+        ...(r.selected ? line('baseline', r.baseline, r.mission, true) : []),
+        ...line('optimised', r.optimised, r.mission, r.selected),
+      ])
       setData('routes', { type: 'FeatureCollection', features })
+    },
+    setDrones(next) {
+      const seen = new Set<string>()
+      for (const d of next) {
+        seen.add(d.mission)
+        let marker = drones.get(d.mission)
+        if (!marker) {
+          const el = document.createElement('div')
+          el.className = 'drone-marker'
+          el.title = d.mission
+          const pulse = document.createElement('span')
+          pulse.className = 'drone-pulse'
+          const glyph = document.createElement('div')
+          glyph.className = 'drone-glyph'
+          glyph.innerHTML =
+            '<svg width="22" height="22" viewBox="0 0 24 24" fill="#22b8cf" stroke="#0b0f17" stroke-width="2" stroke-linejoin="round"><path d="M12 2 20 20l-8-4-8 4 8-18z"/></svg>'
+          el.append(pulse, glyph)
+          marker = new maplibregl.Marker({ element: el }).setLngLat([d.pos.lon, d.pos.lat]).addTo(map)
+          drones.set(d.mission, marker)
+        }
+        marker.getElement().classList.toggle('other', !d.selected)
+        marker.getElement().classList.toggle('drone-live', true)
+        marker.setLngLat([d.pos.lon, d.pos.lat])
+      }
+      for (const [mission, marker] of drones) {
+        if (!seen.has(mission)) {
+          marker.remove()
+          drones.delete(mission)
+        }
+      }
     },
     setRfCoverage(coverage) {
       setData('rf-coverage', coverage ?? empty())
@@ -347,62 +423,6 @@ export function createMapView(container: HTMLElement): MapView {
         cb({ lat: e.lngLat.lat, lon: e.lngLat.lng })
       })
       map.on('mouseout', () => cb(null))
-    },
-    setDrone(pos, opts = false) {
-      const isGlide = typeof opts === 'boolean' ? opts : (opts?.glide ?? false)
-      const heading = typeof opts === 'object' ? opts?.headingDeg : null
-      const isLive = typeof opts === 'object' ? Boolean(opts?.isLive) : false
-      const action = typeof opts === 'object' ? opts?.action : null
-
-      cancelAnimationFrame(droneFrame)
-      if (!pos) {
-        droneMarker?.remove()
-        droneMarker = null
-        droneShown = null
-        droneEl = null
-        droneGlyph = null
-        return
-      }
-      if (!droneMarker) {
-        const el = document.createElement('div')
-        el.className = 'drone-marker'
-        const pulse = document.createElement('span')
-        pulse.className = 'drone-pulse'
-        const glyph = document.createElement('div')
-        glyph.className = 'drone-glyph'
-        glyph.innerHTML =
-          '<svg width="22" height="22" viewBox="0 0 24 24" fill="#22b8cf" stroke="#0b0f17" stroke-width="2" stroke-linejoin="round"><path d="M12 2 20 20l-8-4-8 4 8-18z"/></svg>'
-        el.append(pulse, glyph)
-        droneMarker = new maplibregl.Marker({ element: el }).setLngLat([pos.lon, pos.lat]).addTo(map)
-        droneShown = pos
-        droneEl = el
-        droneGlyph = glyph
-      }
-
-      if (droneEl) {
-        droneEl.classList.toggle('drone-live', isLive)
-        droneEl.classList.toggle('drone-hover', action === 'hover')
-        droneEl.classList.toggle('drone-ground', action === 'ground')
-      }
-      if (droneGlyph && heading !== undefined && heading !== null) {
-        droneGlyph.style.transform = `rotate(${Math.round(heading)}deg)`
-      }
-
-      const from = droneShown
-      if (!isGlide || !from || distanceM(from, pos) > DRONE_SNAP_M) {
-        droneMarker.setLngLat([pos.lon, pos.lat])
-        droneShown = pos
-        return
-      }
-      const marker = droneMarker
-      const started = performance.now()
-      const step = (now: number) => {
-        const f = Math.min(1, (now - started) / DRONE_GLIDE_MS)
-        droneShown = { lat: from.lat + f * (pos.lat - from.lat), lon: from.lon + f * (pos.lon - from.lon) }
-        marker.setLngLat([droneShown.lon, droneShown.lat])
-        if (f < 1) droneFrame = requestAnimationFrame(step)
-      }
-      droneFrame = requestAnimationFrame(step)
     },
     setLayerVisibility(vis) {
       visibility = { ...visibility, ...vis }
@@ -423,17 +443,26 @@ export function createMapView(container: HTMLElement): MapView {
       return is3dMode
     },
     fitScene() {
-      if (!grid) return
-      const b = gridBounds(grid)
-      map.fitBounds([b[0], b[2]], { padding: 48, duration: 450 })
+      if (!scene || scene.grids.length === 0) return
+      const box = boundsOf(scene.grids)
+      if (box) {
+        map.fitBounds(box, { padding: 48, duration: 450 })
+      }
     },
-    centerOnDrone() {
-      if (droneShown) {
-        map.easeTo({ center: [droneShown.lon, droneShown.lat], duration: 450 })
+    centerOnDrone(pos?: Position | null) {
+      if (pos) {
+        map.easeTo({ center: [pos.lon, pos.lat], duration: 450 })
+        return
+      }
+      for (const [, marker] of drones) {
+        if (!marker.getElement().classList.contains('other')) {
+          const lngLat = marker.getLngLat()
+          map.easeTo({ center: [lngLat.lng, lngLat.lat], duration: 450 })
+          return
+        }
       }
     },
     destroy() {
-      cancelAnimationFrame(droneFrame)
       map.remove()
     },
   }
@@ -458,10 +487,4 @@ function label(map: MlMap, pos: Position, text: string, color: string): maplibre
   span.textContent = text
   el.append(dot, span)
   return new maplibregl.Marker({ element: el, anchor: 'left', offset: [-6, 0] }).setLngLat([pos.lon, pos.lat]).addTo(map)
-}
-
-function distanceM(a: Position, b: Position): number {
-  const dLat = (b.lat - a.lat) * 111_320
-  const dLon = (b.lon - a.lon) * 111_320 * Math.cos((a.lat * Math.PI) / 180)
-  return Math.hypot(dLat, dLon)
 }

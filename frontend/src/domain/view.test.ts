@@ -19,6 +19,7 @@ describe('domain/view', () => {
       end_s: 1380,
       status: 'scheduled',
       requested_by: 'HQ',
+      requested_for: 'M1',
     },
     {
       id: 'c2',
@@ -27,6 +28,7 @@ describe('domain/view', () => {
       end_s: 1500,
       status: 'confirmed',
       requested_by: 'HQ',
+      requested_for: 'M1',
     },
   ]
 

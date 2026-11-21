@@ -1,10 +1,9 @@
-import { type CSSProperties, useEffect, useRef, useState } from 'react'
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
 import { ActionIcon, Button, Tooltip } from '@mantine/core'
-import type { Position } from '../api/protocol'
-import { bearingDeg, friendlyZoneState, positionAt } from '../domain/view'
+import { friendlyZoneState, positionAt } from '../domain/view'
 import { useViewTime } from '../hooks/useSimNow'
-import { COLORS, createMapView, ROUTE_COLORS, type MapView } from '../map/mapView'
-import { useStore } from '../store'
+import { COLORS, createMapView, ROUTE_COLORS, type DroneMark, type MapView } from '../map/mapView'
+import { useSelectedMission, useStore } from '../store'
 import { CrosshairIcon, DroneIcon, LayersIcon } from './Icons'
 
 interface ProbeData {
@@ -25,15 +24,16 @@ interface ProbeData {
 export function MapPanel() {
   const container = useRef<HTMLDivElement>(null)
   const view = useRef<MapView | null>(null)
-  const prevLivePos = useRef<Position | null>(null)
-  const lastHeading = useRef<number | null>(null)
 
   const snapshot = useStore((s) => s.snapshot)
   const cuts = useStore((s) => s.cuts)
-  const plan = useStore((s) => s.plan)
-  const drone = useStore((s) => s.drone)
+  const missions = useStore((s) => s.missions)
+  const selected = useStore((s) => s.selectedMission)
   const scrubbing = useStore((s) => s.viewTimeS !== null)
   const t = useViewTime()
+  const list = useMemo(() => Object.values(missions), [missions])
+  const selectedView = useSelectedMission()
+  const drone = selectedView?.drone ?? null
 
   const [showZones, setShowZones] = useState(true)
   const [showBaseline, setShowBaseline] = useState(true)
@@ -53,9 +53,20 @@ export function MapPanel() {
     }
   }, [])
 
+  // Scene: every grid in view, the selected mission's zones over the nominal footprints. Grids
+  // and zones only come with the snapshot, so plans and drones do not redraw it.
   useEffect(() => {
-    if (snapshot) view.current?.setScene(snapshot.scenario, snapshot.grid, snapshot.zones)
-  }, [snapshot])
+    if (!snapshot) return
+    const constraints = snapshot.missions.map((m) => m.constraints)
+    const mission = constraints.find((c) => c.mission === selected) ?? null
+    view.current?.setScene({
+      scenario: snapshot.scenario,
+      grids: constraints.map((c) => c.grid),
+      missionGrid: mission?.grid ?? null,
+      missionZones: mission?.zones ?? [],
+      nominalZones: snapshot.nominal_zones,
+    })
+  }, [snapshot, selected])
 
   useEffect(() => {
     view.current?.setLayerVisibility({
@@ -133,51 +144,36 @@ export function MapPanel() {
 
   useEffect(() => {
     if (!snapshot) return
-    const list = Object.values(cuts)
+    const all = Object.values(cuts)
     const states = Object.fromEntries(
-      snapshot.scenario.friendly_jammers.map((j) => [j.id, friendlyZoneState(j.id, list, t)]),
+      snapshot.scenario.friendly_jammers.map((j) => [j.id, friendlyZoneState(j.id, all, t)]),
     )
     view.current?.setZoneStates(states)
   }, [snapshot, cuts, t])
 
   useEffect(() => {
-    view.current?.setRoutes(plan)
-  }, [plan])
+    view.current?.setRoutes(
+      list.map((m) => ({
+        mission: m.constraints.mission,
+        baseline: m.plan?.baseline_route ?? null,
+        optimised: m.plan?.optimised_route ?? null,
+        selected: m.constraints.mission === selected,
+      })),
+    )
+  }, [list, selected])
 
-  // Live: the server's simulated drone, glided between its updates with heading and pulse.
+  // Live: the server's simulated drones. Scrubbing: where each plan puts its drone at that instant.
   useEffect(() => {
-    if (scrubbing) return
-    if (!drone) {
-      prevLivePos.current = null
-      view.current?.setDrone(null)
-      return
+    const marks: DroneMark[] = []
+    for (const m of list) {
+      const mission = m.constraints.mission
+      const pos = scrubbing
+        ? (m.plan ? positionAt(m.plan.optimised_route, t)?.pos : undefined)
+        : m.drone?.position
+      if (pos) marks.push({ mission, pos, selected: mission === selected })
     }
-    if (prevLivePos.current) {
-      const b = bearingDeg(prevLivePos.current, drone.position)
-      if (b !== null) lastHeading.current = b
-    } else if (plan && plan.optimised_route.length > 1) {
-      lastHeading.current = bearingDeg(plan.optimised_route[0], plan.optimised_route[1])
-    }
-    prevLivePos.current = drone.position
-    view.current?.setDrone(drone.position, {
-      glide: true,
-      headingDeg: lastHeading.current,
-      action: drone.action,
-      isLive: true,
-    })
-  }, [drone, scrubbing, plan])
-
-  // Scrubbing: where the plan puts it at that instant.
-  useEffect(() => {
-    if (!scrubbing) return
-    const at = plan ? positionAt(plan.optimised_route, t) : null
-    view.current?.setDrone(at?.pos ?? null, {
-      glide: false,
-      headingDeg: at?.headingDeg ?? lastHeading.current,
-      action: at?.action ?? null,
-      isLive: false,
-    })
-  }, [plan, scrubbing, t])
+    view.current?.setDrones(marks)
+  }, [list, selected, scrubbing, t])
 
   return (
     <div className="map-wrap">

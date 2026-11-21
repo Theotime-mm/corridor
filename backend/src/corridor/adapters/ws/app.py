@@ -1,4 +1,10 @@
-"""FastAPI application exposing the engine on ``/ws``."""
+"""FastAPI application exposing the engine on ``/ws?callsign=...``.
+
+The callsign says who connects; the scenario gives its role (``Scenario.role_of``). An unknown
+callsign is closed with code ``4003``. Each client gets the snapshot and the events of its role
+(``corridor.adapters.ws.audience``), and may only send commands as itself: no authentication,
+but the filter would be decorative if any client could act under another callsign.
+"""
 
 from __future__ import annotations
 
@@ -13,8 +19,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
+from corridor.adapters.ws.audience import Audience, Viewer
 from corridor.adapters.ws.hub import Hub, Outbox
-from corridor.adapters.ws.schemas import Ack, ClientMessage, Error, Snapshot
+from corridor.adapters.ws.schemas import Ack, ClientMessage, Error, MissionView, Snapshot
 from corridor.domain.geo import Grid, Position
 from corridor.domain.rf.coverage import (
     ContourLevel,
@@ -25,14 +32,16 @@ from corridor.domain.rf.coverage import (
 )
 from corridor.domain.rf.dem import DemProvider, HillFeature, RasterDem, SyntheticDem
 from corridor.domain.scenario import Scenario
-from corridor.domain.zones import Zone, mission_zones, planning_grid
+from corridor.domain.zones import Zone, constraints_by_mission, nominal_zones
 from corridor.engine.clock import SimClock
 from corridor.engine.engine import CommandRejected, Engine
 from corridor.engine.replan import Replanner
 
-ReplannerFactory = Callable[[Scenario, Grid], Replanner]
+ReplannerFactory = Callable[[Scenario, dict[str, Grid]], Replanner]
+"""Takes the planning grid of each mission, by mission id."""
 
 TICK_S = 0.5
+UNKNOWN_CALLSIGN = 4003
 log = logging.getLogger(__name__)
 
 
@@ -45,24 +54,36 @@ async def _tick_forever(engine: Engine) -> None:
         await asyncio.sleep(TICK_S)
 
 
-def snapshot(engine: Engine, grid: Grid, zones: list[Zone]) -> Snapshot:
+def snapshot(engine: Engine, audience: Audience, viewer: Viewer, nominal: list[Zone]) -> Snapshot:
+    scope = audience.scope(viewer)
     return Snapshot(
-        scenario=engine.scenario,
-        grid=grid,
-        zones=zones,
+        viewer=viewer,
+        scenario=audience.scenario_for(viewer),
+        nominal_zones=audience.nominal_zones_for(viewer, nominal),
+        missions=[
+            MissionView(
+                constraints=runtime.constraints,
+                status=engine.state.missions[mission_id],
+                plan=runtime.plan,
+                drone=runtime.drone,
+            )
+            for mission_id, runtime in engine.missions.items()
+            if mission_id in scope.missions
+        ],
         clock=engine.clock.state(),
-        cuts=list(engine.state.cuts.values()),
-        mission_status=engine.state.mission_status,
-        plan=engine.plan,
-        drone=engine.drone,
+        cuts=[c for c in engine.state.cuts.values() if c.jammer in scope.jammers],
     )
 
 
-def handle_message(raw: str, engine: Engine, hub: Hub, outbox: Outbox) -> None:
+def handle_message(raw: str, viewer: Viewer, engine: Engine, hub: Hub, outbox: Outbox) -> None:
     try:
         message = ClientMessage.model_validate_json(raw)
     except ValidationError as exc:
         hub.reply(outbox, Error(req_id=None, reason=str(exc)))
+        return
+    if message.command.actor != viewer.callsign:
+        reason = f"connected as {viewer.callsign}, cannot act as {message.command.actor}"
+        hub.reply(outbox, Error(req_id=message.req_id, reason=reason))
         return
     try:
         engine.submit(message.command)
@@ -89,7 +110,7 @@ def _find_dem_path(name: str) -> Path | None:
 
 
 def _select_dem(scenario: Scenario) -> DemProvider:
-    launch_p = scenario.mission.launch
+    launch_p = scenario.missions[0].launch
     ny = _find_dem_path("copernicus_newyork.tif")
     if 40.5 <= launch_p.lat <= 41.0 and ny:
         return RasterDem(ny)
@@ -136,12 +157,13 @@ def _build_threat_coverage_features(
         ContourLevel(-100.0, "Enemy Fringe (-100 dBm)", "#cc5de8", 0.10, "#ae3ec9", 1),
     ]
 
+    default_band = scenario.missions[0].band
     for jammer in scenario.friendly_jammers:
         cov = compute_polar_coverage(
             dem=dem,
             tx_pos=jammer.pos,
             tx_eirp_w=jammer.eirp_w,
-            band_or_freq_hz=scenario.mission.band,
+            band_or_freq_hz=default_band,
             rx_h_agl_m=drone_h_agl_m,
             max_range_m=5000.0,
             azimuth_step_deg=10.0,
@@ -160,7 +182,7 @@ def _build_threat_coverage_features(
                 dem=dem,
                 tx_pos=threat.pos,
                 tx_eirp_w=threat.eirp_w,
-                band_or_freq_hz=scenario.mission.band,
+                band_or_freq_hz=default_band,
                 rx_h_agl_m=drone_h_agl_m,
                 max_range_m=5000.0,
                 azimuth_step_deg=10.0,
@@ -183,16 +205,18 @@ def create_app(
     replanner: ReplannerFactory | None = None,
 ) -> FastAPI:
     """Without ``replanner``, nothing is planned. The first plan is requested at startup."""
-    grid = planning_grid(scenario, cell_m)
-    zones = mission_zones(scenario)
-    planner = replanner(scenario, grid) if replanner else None
-    engine = Engine(scenario, SimClock(clock_factor), planner)
-    hub = Hub(engine.clock.now)
+    constraints = constraints_by_mission(scenario, cell_m)
+    nominal = nominal_zones(scenario)
+    grids = {mission: c.grid for mission, c in constraints.items()}
+    planner = replanner(scenario, grids) if replanner else None
+    engine = Engine(scenario, constraints, SimClock(clock_factor), planner)
+    audience = Audience(scenario, constraints)
+    hub = Hub(engine.clock.now, audience.sees)
     engine.subscribe(hub.publish)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        engine.request_plan()
+        engine.request_plans()
         ticker = asyncio.create_task(_tick_forever(engine))
         yield
         ticker.cancel()
@@ -219,12 +243,17 @@ def create_app(
 
     @app.get("/api/rf/heatmap")
     async def get_rf_heatmap(
+        mission_id: str | None = None,
         drone_h_agl_m: float = 20.0,
         step_m: float = 300.0,
         cells: bool = False,
     ) -> dict[str, Any]:
         """Return continuous J/S heatmap grid for GPU-accelerated heatmap rendering."""
         dem = _select_dem(scenario)
+        m = scenario.mission(mission_id) if mission_id else scenario.missions[0]
+        if m is None:
+            m = scenario.missions[0]
+        grid = grids.get(m.id) or next(iter(grids.values()))
         jammers: list[tuple[str, Position, float]] = [
             (j.id, j.pos, j.eirp_w) for j in scenario.friendly_jammers
         ]
@@ -240,10 +269,10 @@ def create_app(
 
         return compute_js_heatmap_geojson(
             dem=dem,
-            pilot_pos=scenario.mission.launch,
-            pilot_eirp_w=scenario.mission.link_eirp_w,
+            pilot_pos=m.launch,
+            pilot_eirp_w=m.link_eirp_w,
             jammers=jammers,
-            band_or_freq_hz=scenario.mission.band,
+            band_or_freq_hz=m.band,
             bounds=bounds,
             step_m=max(step_m, 250.0),
             drone_h_agl_m=drone_h_agl_m,
@@ -251,9 +280,17 @@ def create_app(
         )
 
     @app.get("/api/rf/probe")
-    async def probe_rf(lat: float, lon: float, drone_h_agl_m: float = 20.0) -> dict[str, Any]:
+    async def probe_rf(
+        lat: float,
+        lon: float,
+        mission_id: str | None = None,
+        drone_h_agl_m: float = 20.0,
+    ) -> dict[str, Any]:
         """Probe real-time RF link budget & terrain shielding at a specific coordinate."""
         dem = _select_dem(scenario)
+        m = scenario.mission(mission_id) if mission_id else scenario.missions[0]
+        if m is None:
+            m = scenario.missions[0]
         jammers: list[tuple[str, Position, float]] = [
             (j.id, j.pos, j.eirp_w) for j in scenario.friendly_jammers
         ]
@@ -264,21 +301,25 @@ def create_app(
         return probe_point_rf(
             dem=dem,
             target_pos=Position(lat=lat, lon=lon),
-            pilot_pos=scenario.mission.launch,
-            pilot_eirp_w=scenario.mission.link_eirp_w,
+            pilot_pos=m.launch,
+            pilot_eirp_w=m.link_eirp_w,
             jammers=jammers,
-            band_or_freq_hz=scenario.mission.band,
+            band_or_freq_hz=m.band,
             drone_h_agl_m=drone_h_agl_m,
         )
 
     @app.websocket("/ws")
-    async def ws_endpoint(websocket: WebSocket) -> None:
+    async def ws_endpoint(websocket: WebSocket, callsign: str = "") -> None:
         await websocket.accept()
-        outbox = hub.connect(snapshot(engine, grid, zones))
+        viewer = audience.viewer(callsign)
+        if viewer is None:
+            await websocket.close(code=UNKNOWN_CALLSIGN, reason=f"unknown callsign {callsign!r}")
+            return
+        outbox = hub.connect(viewer, snapshot(engine, audience, viewer, nominal))
         sender = asyncio.create_task(_pump(websocket, outbox))
         try:
             while True:
-                handle_message(await websocket.receive_text(), engine, hub, outbox)
+                handle_message(await websocket.receive_text(), viewer, engine, hub, outbox)
         except WebSocketDisconnect:
             pass
         finally:
