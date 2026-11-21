@@ -5,6 +5,22 @@ import { bearingDeg, friendlyZoneState, positionAt } from '../domain/view'
 import { useViewTime } from '../hooks/useSimNow'
 import { COLORS, createMapView, ROUTE_COLORS, type MapView } from '../map/mapView'
 import { useStore } from '../store'
+import { CrosshairIcon, DroneIcon, LayersIcon } from './Icons'
+
+interface ProbeData {
+  lat: number
+  lon: number
+  elev_m: number
+  status: 'SAFE' | 'CAUTION' | 'CONTENTION' | 'JAMMED'
+  js_db: number
+  p_pilot_dbm: number
+  p_jammer_dbm: number
+  shielding_db: number
+  worst_jammer_id?: string
+  pilot_dist_m?: number
+  jammer_dist_m?: number
+  details: string
+}
 
 export function MapPanel() {
   const container = useRef<HTMLDivElement>(null)
@@ -21,7 +37,10 @@ export function MapPanel() {
 
   const [showZones, setShowZones] = useState(true)
   const [showBaseline, setShowBaseline] = useState(true)
+  const [showRf, setShowRf] = useState(false)
+  const [showHeatmap, setShowHeatmap] = useState(false)
   const [legendOpen, setLegendOpen] = useState(false)
+  const [probe, setProbe] = useState<ProbeData | null>(null)
 
   useEffect(() => {
     if (!container.current) return
@@ -40,8 +59,61 @@ export function MapPanel() {
     view.current?.setLayerVisibility({
       zones: showZones,
       baseline: showBaseline,
+      rf: showRf,
+      heatmap: showHeatmap,
     })
-  }, [showZones, showBaseline])
+  }, [showZones, showBaseline, showRf, showHeatmap])
+
+  useEffect(() => {
+    if (!showRf) return
+    let active = true
+    fetch('/api/rf/coverage')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (active && data) view.current?.setRfCoverage(data)
+      })
+      .catch((err) => console.warn('RF coverage load error:', err))
+    return () => {
+      active = false
+    }
+  }, [showRf, snapshot])
+
+  useEffect(() => {
+    if (!showHeatmap) {
+      view.current?.setRfHeatmap(null)
+      return
+    }
+    let active = true
+    fetch('/api/rf/heatmap')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (active && data) view.current?.setRfHeatmap(data)
+      })
+      .catch((err) => console.warn('RF heatmap load error:', err))
+    return () => {
+      active = false
+    }
+  }, [showHeatmap, snapshot])
+
+  useEffect(() => {
+    if (!view.current) return
+    let timeoutId: number | undefined
+    view.current.onHover((pos) => {
+      window.clearTimeout(timeoutId)
+      if (!pos) {
+        setProbe(null)
+        return
+      }
+      timeoutId = window.setTimeout(() => {
+        fetch(`/api/rf/probe?lat=${pos.lat.toFixed(5)}&lon=${pos.lon.toFixed(5)}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            if (data) setProbe(data)
+          })
+          .catch(() => {})
+      }, 70)
+    })
+  }, [])
 
   useEffect(() => {
     if (!snapshot) return
@@ -95,6 +167,25 @@ export function MapPanel() {
     <div className="map-wrap">
       <div ref={container} className="map" />
 
+      {/* Floating Tactical Inspector Probe */}
+      {probe && (
+        <div className="tactical-inspector">
+          <div className="tactical-inspector-header">
+            <span className="tactical-inspector-title">TACTICAL PROBE</span>
+            <span className={`tactical-badge tactical-badge-${probe.status.toLowerCase()}`}>
+              {probe.status}: {probe.js_db >= 0 ? `+${probe.js_db}` : probe.js_db} dB J/S
+            </span>
+          </div>
+          <div className="tactical-grid">
+            <div className="tactical-row"><span className="tactical-label">Pilot (S):</span> <span className="tactical-val">{probe.p_pilot_dbm} dBm</span></div>
+            <div className="tactical-row"><span className="tactical-label">Jammer (J):</span> <span className="tactical-val">{probe.p_jammer_dbm} dBm</span></div>
+            <div className="tactical-row"><span className="tactical-label">Ground:</span> <span className="tactical-val">{probe.elev_m} m</span></div>
+            <div className="tactical-row"><span className="tactical-label">Shielding:</span> <span className="tactical-val">{probe.shielding_db > 0 ? `+${probe.shielding_db} dB` : '0 dB'}</span></div>
+          </div>
+          <div className="tactical-details">{probe.details}</div>
+        </div>
+      )}
+
       {/* Top-Right Floating Tactical Toolbar and Legend */}
       <div className="map-hud-topright">
         <div className="map-hud-bar">
@@ -106,6 +197,24 @@ export function MapPanel() {
             title="Toggle jammer and radar zones"
           >
             Zones
+          </Button>
+          <Button
+            size="compact-xs"
+            variant={showRf ? 'light' : 'subtle'}
+            color={showRf ? 'teal' : 'gray'}
+            onClick={() => setShowRf((v) => !v)}
+            title="Toggle terrain-aware RF propagation contours"
+          >
+            Terrain RF
+          </Button>
+          <Button
+            size="compact-xs"
+            variant={showHeatmap ? 'light' : 'subtle'}
+            color={showHeatmap ? 'grape' : 'gray'}
+            onClick={() => setShowHeatmap((v) => !v)}
+            title="Toggle continuous Jammer-to-Signal (J/S) heatmap"
+          >
+            Heatmap
           </Button>
           <Button
             size="compact-xs"
@@ -124,13 +233,7 @@ export function MapPanel() {
               aria-label="Fit scenario bounds"
               onClick={() => view.current?.fitScene()}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="9" />
-                <line x1="22" y1="12" x2="18" y2="12" />
-                <line x1="6" y1="12" x2="2" y2="12" />
-                <line x1="12" y1="6" x2="12" y2="2" />
-                <line x1="12" y1="22" x2="12" y2="18" />
-              </svg>
+              <CrosshairIcon size={14} />
             </ActionIcon>
           </Tooltip>
           {drone && (
@@ -142,9 +245,7 @@ export function MapPanel() {
                 aria-label="Center on drone"
                 onClick={() => view.current?.centerOnDrone()}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polygon points="3 11 22 2 13 21 11 13 3 11" />
-                </svg>
+                <DroneIcon size={14} />
               </ActionIcon>
             </Tooltip>
           )}
@@ -152,6 +253,7 @@ export function MapPanel() {
             size="compact-xs"
             variant={legendOpen ? 'filled' : 'subtle'}
             color={legendOpen ? 'cyan' : 'gray'}
+            leftSection={<LayersIcon size={12} />}
             onClick={() => setLegendOpen((v) => !v)}
             title="Toggle tactical legend"
           >
@@ -195,4 +297,7 @@ const LEGEND: { label: string; color: string; kind: 'area' | 'line' | 'dash' }[]
   { label: 'Planned route', color: ROUTE_COLORS.approved, kind: 'line' },
   { label: 'Route awaiting confirmation', color: ROUTE_COLORS.preview, kind: 'line' },
   { label: 'Fallback route', color: ROUTE_COLORS.fallback, kind: 'line' },
+  { label: 'Friendly Jammer RF field', color: '#e03131', kind: 'area' },
+  { label: 'Enemy Jammer RF field', color: '#9c36b5', kind: 'area' },
+  { label: 'J/S Heatmap (Safe → Denied)', color: '#20c997', kind: 'area' },
 ]

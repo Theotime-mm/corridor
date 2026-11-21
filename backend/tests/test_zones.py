@@ -62,7 +62,7 @@ def test_jammer_on_the_pilot_is_rejected() -> None:
 
 def test_demo_zones(scenario: Scenario) -> None:
     zones = {z.threat: z for z in mission_zones(scenario)}
-    assert set(zones) == {"J3", "E1", "R1"}
+    assert set(zones) == {"J3", "E1"}
     assert zones["J3"].kind == "friendly_jammer"
     assert all(z.forbidden == "inside" for z in zones.values())
     assert all(len(z.ring) == RING_VERTICES for z in zones.values())
@@ -75,6 +75,14 @@ def test_demo_zones(scenario: Scenario) -> None:
 
 def test_jammer_off_the_mission_band_has_no_zone(scenario: Scenario) -> None:
     data = scenario.model_dump(mode="json")
+    data["enemy_threats"].append(
+        {
+            "type": "radar",
+            "id": "R1",
+            "pos": {"lat": 48.173744, "lon": 11.574065},
+            "radius_m": 2000,
+        }
+    )
     data["mission"]["band"] = "900MHz"
     zones = mission_zones(Scenario.model_validate(data))
     assert [z.threat for z in zones] == ["R1"]

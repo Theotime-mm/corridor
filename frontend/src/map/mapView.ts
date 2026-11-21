@@ -71,6 +71,8 @@ export interface LayerVisibility {
   zones?: boolean
   baseline?: boolean
   grid?: boolean
+  rf?: boolean
+  heatmap?: boolean
 }
 
 export interface MapView {
@@ -80,6 +82,9 @@ export interface MapView {
   setRoutes(plan: PlanUpdated | null): void
   /** `glide`: animate from the shown position (live updates); otherwise jump (scrubbing). */
   setDrone(pos: Position | null, opts?: boolean | DroneDisplayOpts): void
+  setRfCoverage(coverage: FeatureCollection | null): void
+  setRfHeatmap(heatmap: FeatureCollection | null): void
+  onHover(cb: (pos: Position | null) => void): void
   setLayerVisibility(vis: LayerVisibility): void
   fitScene(): void
   centerOnDrone(): void
@@ -99,7 +104,7 @@ export function createMapView(container: HTMLElement): MapView {
   let grid: Grid | null = null
   let zones: Zone[] = []
   let states: Record<string, ZoneState> = {}
-  let visibility: Required<LayerVisibility> = { grid: true, baseline: true, zones: true }
+  let visibility: Required<LayerVisibility> = { grid: true, baseline: true, zones: true, rf: true, heatmap: false }
   const markers: maplibregl.Marker[] = []
   let droneMarker: maplibregl.Marker | null = null
   let droneShown: Position | null = null
@@ -119,13 +124,60 @@ export function createMapView(container: HTMLElement): MapView {
     map.setLayoutProperty('route-baseline', 'visibility', v(visibility.baseline))
     map.setLayoutProperty('zones-fill', 'visibility', v(visibility.zones))
     map.setLayoutProperty('zones-line', 'visibility', v(visibility.zones))
+    map.setLayoutProperty('rf-coverage-fill', 'visibility', v(visibility.rf))
+    map.setLayoutProperty('rf-coverage-line', 'visibility', v(visibility.rf))
+    map.setLayoutProperty('rf-heatmap-layer', 'visibility', v(visibility.heatmap))
   }
 
   map.on('load', () => {
-    for (const id of ['grid', 'zones', 'routes']) map.addSource(id, { type: 'geojson', data: pending[id] ?? empty() })
+    for (const id of ['grid', 'zones', 'routes', 'rf-coverage', 'rf-heatmap']) map.addSource(id, { type: 'geojson', data: pending[id] ?? empty() })
     map.addLayer({
       id: 'grid-line', type: 'line', source: 'grid',
       paint: { 'line-color': '#868e96', 'line-width': 1, 'line-dasharray': [4, 4] },
+    })
+    map.addLayer({
+      id: 'rf-heatmap-layer', type: 'heatmap', source: 'rf-heatmap',
+      paint: {
+        'heatmap-weight': ['get', 'weight'],
+        'heatmap-intensity': [
+          'interpolate',
+          ['linear'],
+          ['zoom'],
+          9, 0.85,
+          12, 1.1,
+          15, 1.4,
+        ],
+        'heatmap-color': [
+          'interpolate',
+          ['linear'],
+          ['heatmap-density'],
+          0, 'rgba(0, 0, 0, 0)',
+          0.06, 'rgba(32, 201, 151, 0.40)', // Safe green
+          0.28, 'rgba(32, 201, 151, 0.50)', // Safe green
+          0.48, 'rgba(250, 176, 5, 0.65)',  // Caution yellow
+          0.72, 'rgba(253, 126, 20, 0.80)', // Contention orange
+          1.0, 'rgba(224, 49, 49, 0.90)',   // Denied red
+        ],
+        'heatmap-radius': [
+          'interpolate',
+          ['exponential', 2],
+          ['zoom'],
+          9, 14,
+          11, 36,
+          13, 115,
+          15, 380,
+          17, 1250,
+        ],
+        'heatmap-opacity': 0.72,
+      },
+    })
+    map.addLayer({
+      id: 'rf-coverage-fill', type: 'fill', source: 'rf-coverage',
+      paint: { 'fill-color': ['get', 'fill'], 'fill-opacity': ['get', 'fill_opacity'] },
+    })
+    map.addLayer({
+      id: 'rf-coverage-line', type: 'line', source: 'rf-coverage',
+      paint: { 'line-color': ['get', 'stroke'], 'line-width': ['get', 'stroke_width'] },
     })
     map.addLayer({
       id: 'zones-fill', type: 'fill', source: 'zones',
@@ -199,6 +251,18 @@ export function createMapView(container: HTMLElement): MapView {
           ]
         : []
       setData('routes', { type: 'FeatureCollection', features })
+    },
+    setRfCoverage(coverage) {
+      setData('rf-coverage', coverage ?? empty())
+    },
+    setRfHeatmap(heatmap) {
+      setData('rf-heatmap', heatmap ?? empty())
+    },
+    onHover(cb) {
+      map.on('mousemove', (e) => {
+        cb({ lat: e.lngLat.lat, lon: e.lngLat.lng })
+      })
+      map.on('mouseout', () => cb(null))
     },
     setDrone(pos, opts = false) {
       const isGlide = typeof opts === 'boolean' ? opts : (opts?.glide ?? false)
