@@ -468,8 +468,13 @@ def compute_js_heatmap_geojson(
     else:
         max_jammer_prx = np.full(len(grid_pts), -140.0)
 
-    # J/S ratio in dB
-    js_arr = max_jammer_prx - p_rx_pilot
+    # Physical thermal noise floor for receiver (-105 dBm).
+    # Beyond the jammer's physical footprint, jammer power is negligible
+    negligible_mask = max_jammer_prx < -105.0
+    effective_j_prx = np.where(negligible_mask, -150.0, max_jammer_prx)
+
+    # J/S ratio in dB: where jammer is negligible, J/S is clamped to -50 dB (safe green)
+    js_arr = np.where(negligible_mask, -50.0, effective_j_prx - p_rx_pilot)
 
     # Weight mapping: base 0.12 (Safe J/S <= -6 dB) up to 1.0 (Deadly J/S >= +12 dB)
     # Safe zones behind mountains and far from jammers have base weight that renders as solid GREEN
@@ -576,17 +581,26 @@ def probe_point_rf(
             worst_jammer_id = j_id
             worst_jammer_lb = j_lb
 
-    if worst_jammer_lb is None:
+    NOISE_FLOOR_DBM = -105.0
+
+    if worst_jammer_lb is None or max_j_prx < NOISE_FLOOR_DBM:
         return {
             "lat": target_pos.lat,
             "lon": target_pos.lon,
             "elev_m": round(ground_elev, 1),
             "status": "SAFE",
             "js_db": -50.0,
-            "p_pilot_dbm": round(pilot_lb.p_rx_dbm, 1),
+            "p_pilot_dbm": round(max(-120.0, pilot_lb.p_rx_dbm), 1),
             "p_jammer_dbm": -150.0,
             "shielding_db": 0.0,
-            "details": "No active jammers in range",
+            "worst_jammer_id": worst_jammer_id if worst_jammer_lb else "None",
+            "pilot_dist_m": round(pilot_lb.distance_m, 0),
+            "jammer_dist_m": (
+                round(worst_jammer_lb.distance_m, 0)
+                if worst_jammer_lb
+                else 0.0
+            ),
+            "details": "Clear spectrum · Outside jammer reach (0.0 W interference)",
         }
 
     js_db = worst_jammer_lb.p_rx_dbm - pilot_lb.p_rx_dbm

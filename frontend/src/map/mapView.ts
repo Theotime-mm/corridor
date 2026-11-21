@@ -86,6 +86,8 @@ export interface MapView {
   setRfHeatmap(heatmap: FeatureCollection | null): void
   onHover(cb: (pos: Position | null) => void): void
   setLayerVisibility(vis: LayerVisibility): void
+  set3D(enabled: boolean): void
+  is3D(): boolean
   fitScene(): void
   centerOnDrone(): void
   destroy(): void
@@ -95,11 +97,19 @@ export interface MapView {
 maplibregl.setWorkerUrl(workerUrl)
 
 export function createMapView(container: HTMLElement): MapView {
-  const map = new maplibregl.Map({ container, style: STYLE, center: [0, 0], zoom: 1, attributionControl: { compact: true } })
-  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-left')
+  const map = new maplibregl.Map({
+    container,
+    style: STYLE,
+    center: [0, 0],
+    zoom: 1,
+    attributionControl: { compact: true },
+    maxPitch: 85,
+  })
+  map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'top-left')
   map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left')
 
   let loaded = false
+  let is3dMode = false
   const pending: Record<string, FC> = {}
   let grid: Grid | null = null
   let zones: Zone[] = []
@@ -126,87 +136,162 @@ export function createMapView(container: HTMLElement): MapView {
     map.setLayoutProperty('zones-line', 'visibility', v(visibility.zones))
     map.setLayoutProperty('rf-coverage-fill', 'visibility', v(visibility.rf))
     map.setLayoutProperty('rf-coverage-line', 'visibility', v(visibility.rf))
+    map.setLayoutProperty('rf-safe-baseline', 'visibility', v(visibility.heatmap))
     map.setLayoutProperty('rf-heatmap-layer', 'visibility', v(visibility.heatmap))
   }
 
   map.on('load', () => {
-    for (const id of ['grid', 'zones', 'routes', 'rf-coverage', 'rf-heatmap']) map.addSource(id, { type: 'geojson', data: pending[id] ?? empty() })
+    // 1. Add 3D Terrarium raster-dem source
+    map.addSource('terrain-dem', {
+      type: 'raster-dem',
+      tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      encoding: 'terrarium',
+      maxzoom: 15,
+    })
+
+    // 2. Global safe airspace baseline layer covering entire Earth in emerald green
+    map.addSource('rf-safe-baseline', {
+      type: 'geojson',
+      data: {
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            properties: {},
+            geometry: {
+              type: 'Polygon',
+              coordinates: [
+                [
+                  [-180, -85],
+                  [180, -85],
+                  [180, 85],
+                  [-180, 85],
+                  [-180, -85],
+                ],
+              ],
+            },
+          },
+        ],
+      },
+    })
     map.addLayer({
-      id: 'grid-line', type: 'line', source: 'grid',
+      id: 'rf-safe-baseline',
+      type: 'fill',
+      source: 'rf-safe-baseline',
+      paint: {
+        'fill-color': 'rgba(32, 201, 151, 0.35)', // Translucent emerald green
+        'fill-opacity': 0.85,
+      },
+    })
+
+    for (const id of ['grid', 'zones', 'routes', 'rf-coverage', 'rf-heatmap']) {
+      map.addSource(id, { type: 'geojson', data: pending[id] ?? empty() })
+    }
+    map.addLayer({
+      id: 'grid-line',
+      type: 'line',
+      source: 'grid',
       paint: { 'line-color': '#868e96', 'line-width': 1, 'line-dasharray': [4, 4] },
     })
     map.addLayer({
-      id: 'rf-heatmap-layer', type: 'heatmap', source: 'rf-heatmap',
+      id: 'rf-heatmap-layer',
+      type: 'heatmap',
+      source: 'rf-heatmap',
       paint: {
         'heatmap-weight': ['get', 'weight'],
         'heatmap-intensity': [
           'interpolate',
           ['linear'],
           ['zoom'],
-          9, 0.85,
-          12, 1.1,
-          15, 1.4,
+          8, 0.75,
+          11, 1.0,
+          14, 1.3,
         ],
         'heatmap-color': [
           'interpolate',
           ['linear'],
           ['heatmap-density'],
           0, 'rgba(0, 0, 0, 0)',
-          0.06, 'rgba(32, 201, 151, 0.40)', // Safe green
-          0.28, 'rgba(32, 201, 151, 0.50)', // Safe green
-          0.48, 'rgba(250, 176, 5, 0.65)',  // Caution yellow
-          0.72, 'rgba(253, 126, 20, 0.80)', // Contention orange
-          1.0, 'rgba(224, 49, 49, 0.90)',   // Denied red
+          0.10, 'rgba(32, 201, 151, 0.0)',  // Seamless fade to global safe baseline
+          0.28, 'rgba(32, 201, 151, 0.40)', // Safe green
+          0.48, 'rgba(250, 176, 5, 0.70)',  // Caution yellow
+          0.72, 'rgba(253, 126, 20, 0.85)', // Contention orange
+          1.0, 'rgba(224, 49, 49, 0.95)',   // Denied red
         ],
         'heatmap-radius': [
           'interpolate',
           ['exponential', 2],
           ['zoom'],
-          9, 14,
-          11, 36,
-          13, 115,
-          15, 380,
-          17, 1250,
+          8, 12,
+          10, 28,
+          12, 75,
+          14, 240,
+          16, 780,
+          18, 2500,
         ],
-        'heatmap-opacity': 0.72,
+        'heatmap-opacity': 0.75,
       },
     })
     map.addLayer({
-      id: 'rf-coverage-fill', type: 'fill', source: 'rf-coverage',
+      id: 'rf-coverage-fill',
+      type: 'fill',
+      source: 'rf-coverage',
       paint: { 'fill-color': ['get', 'fill'], 'fill-opacity': ['get', 'fill_opacity'] },
     })
     map.addLayer({
-      id: 'rf-coverage-line', type: 'line', source: 'rf-coverage',
+      id: 'rf-coverage-line',
+      type: 'line',
+      source: 'rf-coverage',
       paint: { 'line-color': ['get', 'stroke'], 'line-width': ['get', 'stroke_width'] },
     })
     map.addLayer({
-      id: 'zones-fill', type: 'fill', source: 'zones',
+      id: 'zones-fill',
+      type: 'fill',
+      source: 'zones',
       paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['get', 'opacity'] },
     })
     map.addLayer({
-      id: 'zones-line', type: 'line', source: 'zones',
+      id: 'zones-line',
+      type: 'line',
+      source: 'zones',
       paint: { 'line-color': ['get', 'color'], 'line-width': 2 },
     })
     map.addLayer({
-      id: 'route-baseline', type: 'line', source: 'routes', filter: ['==', ['get', 'kind'], 'baseline'],
+      id: 'route-baseline',
+      type: 'line',
+      source: 'routes',
+      filter: ['==', ['get', 'kind'], 'baseline'],
       paint: { 'line-color': COLORS.baseline, 'line-width': 3, 'line-dasharray': [2, 2] },
     })
     map.addLayer({
-      id: 'route-optimised', type: 'line', source: 'routes', filter: ['==', ['get', 'kind'], 'optimised'],
+      id: 'route-optimised',
+      type: 'line',
+      source: 'routes',
+      filter: ['==', ['get', 'kind'], 'optimised'],
       paint: { 'line-color': ['get', 'color'], 'line-width': 4 },
     })
     loaded = true
+    if (is3dMode) {
+      map.setTerrain({ source: 'terrain-dem', exaggeration: 1.35 })
+    }
     applyVisibility()
   })
 
   const renderZones = () => {
     if (!grid) return
-    const outer = [...gridBounds(grid), gridBounds(grid)[0]]
+    const worldOuter = [
+      [-180, -85],
+      [180, -85],
+      [180, 85],
+      [-180, 85],
+      [-180, -85],
+    ]
     const features: Feature[] = zones.map((z) => {
       const ring = [...z.ring.map((p) => [p.lon, p.lat]), [z.ring[0].lon, z.ring[0].lat]]
       const { color, opacity } = zoneStyle(z, states[z.threat] ?? 'on')
-      // forbidden "outside": everything but the ring, drawn as the grid with the ring as a hole
-      const coordinates = z.forbidden === 'inside' ? [ring] : [outer, ring]
+      // forbidden "outside": everything but the ring, drawn with world bounds so no rectangular box appears
+      const coordinates = z.forbidden === 'inside' ? [ring] : [worldOuter, ring]
       return {
         type: 'Feature',
         properties: { threat: z.threat, color, opacity },
@@ -323,6 +408,20 @@ export function createMapView(container: HTMLElement): MapView {
     setLayerVisibility(vis) {
       visibility = { ...visibility, ...vis }
       applyVisibility()
+    },
+    set3D(enabled: boolean) {
+      is3dMode = enabled
+      if (!loaded) return
+      if (enabled) {
+        map.setTerrain({ source: 'terrain-dem', exaggeration: 1.35 })
+        map.easeTo({ pitch: 62, bearing: -20, duration: 800 })
+      } else {
+        map.setTerrain(null)
+        map.easeTo({ pitch: 0, bearing: 0, duration: 600 })
+      }
+    },
+    is3D() {
+      return is3dMode
     },
     fitScene() {
       if (!grid) return

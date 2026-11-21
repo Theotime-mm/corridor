@@ -39,6 +39,7 @@ export function MapPanel() {
   const [showBaseline, setShowBaseline] = useState(true)
   const [showRf, setShowRf] = useState(false)
   const [showHeatmap, setShowHeatmap] = useState(false)
+  const [is3D, setIs3D] = useState(false)
   const [legendOpen, setLegendOpen] = useState(false)
   const [probe, setProbe] = useState<ProbeData | null>(null)
 
@@ -224,6 +225,19 @@ export function MapPanel() {
             title="Toggle baseline detour route"
           >
             Detour
+          </Button>
+          <Button
+            size="compact-xs"
+            variant={is3D ? 'filled' : 'subtle'}
+            color={is3D ? 'teal' : 'gray'}
+            onClick={() => {
+              const next = !is3D
+              setIs3D(next)
+              view.current?.set3D(next)
+            }}
+            title="Toggle 3D Terrain view (pitch and elevation relief)"
+          >
+            {is3D ? '3D Active' : '3D View'}
           </Button>
           <Tooltip label="Fit scenario bounds" openDelay={300}>
             <ActionIcon
