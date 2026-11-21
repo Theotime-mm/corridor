@@ -1,4 +1,10 @@
-"""FastAPI application exposing the engine on ``/ws``."""
+"""FastAPI application exposing the engine on ``/ws?callsign=...``.
+
+The callsign says who connects; the scenario gives its role (``Scenario.role_of``). An unknown
+callsign is closed with code ``4003``. Each client gets the snapshot and the events of its role
+(``corridor.adapters.ws.audience``), and may only send commands as itself: no authentication,
+but the filter would be decorative if any client could act under another callsign.
+"""
 
 from __future__ import annotations
 
@@ -10,18 +16,21 @@ from collections.abc import AsyncIterator, Callable
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from corridor.adapters.ws.audience import Audience, Viewer
 from corridor.adapters.ws.hub import Hub, Outbox
-from corridor.adapters.ws.schemas import Ack, ClientMessage, Error, Snapshot
+from corridor.adapters.ws.schemas import Ack, ClientMessage, Error, MissionView, Snapshot
 from corridor.domain.geo import Grid
 from corridor.domain.scenario import Scenario
-from corridor.domain.zones import Zone, mission_zones, planning_grid
+from corridor.domain.zones import Zone, constraints_by_mission, nominal_zones
 from corridor.engine.clock import SimClock
 from corridor.engine.engine import CommandRejected, Engine
 from corridor.engine.replan import Replanner
 
-ReplannerFactory = Callable[[Scenario, Grid], Replanner]
+ReplannerFactory = Callable[[Scenario, dict[str, Grid]], Replanner]
+"""Takes the planning grid of each mission, by mission id."""
 
 TICK_S = 0.5
+UNKNOWN_CALLSIGN = 4003
 log = logging.getLogger(__name__)
 
 
@@ -34,24 +43,36 @@ async def _tick_forever(engine: Engine) -> None:
         await asyncio.sleep(TICK_S)
 
 
-def snapshot(engine: Engine, grid: Grid, zones: list[Zone]) -> Snapshot:
+def snapshot(engine: Engine, audience: Audience, viewer: Viewer, nominal: list[Zone]) -> Snapshot:
+    scope = audience.scope(viewer)
     return Snapshot(
-        scenario=engine.scenario,
-        grid=grid,
-        zones=zones,
+        viewer=viewer,
+        scenario=audience.scenario_for(viewer),
+        nominal_zones=audience.nominal_zones_for(viewer, nominal),
+        missions=[
+            MissionView(
+                constraints=runtime.constraints,
+                status=engine.state.missions[mission_id],
+                plan=runtime.plan,
+                drone=runtime.drone,
+            )
+            for mission_id, runtime in engine.missions.items()
+            if mission_id in scope.missions
+        ],
         clock=engine.clock.state(),
-        cuts=list(engine.state.cuts.values()),
-        mission_status=engine.state.mission_status,
-        plan=engine.plan,
-        drone=engine.drone,
+        cuts=[c for c in engine.state.cuts.values() if c.jammer in scope.jammers],
     )
 
 
-def handle_message(raw: str, engine: Engine, hub: Hub, outbox: Outbox) -> None:
+def handle_message(raw: str, viewer: Viewer, engine: Engine, hub: Hub, outbox: Outbox) -> None:
     try:
         message = ClientMessage.model_validate_json(raw)
     except ValidationError as exc:
         hub.reply(outbox, Error(req_id=None, reason=str(exc)))
+        return
+    if message.command.actor != viewer.callsign:
+        reason = f"connected as {viewer.callsign}, cannot act as {message.command.actor}"
+        hub.reply(outbox, Error(req_id=message.req_id, reason=reason))
         return
     try:
         engine.submit(message.command)
@@ -73,16 +94,18 @@ def create_app(
     replanner: ReplannerFactory | None = None,
 ) -> FastAPI:
     """Without ``replanner``, nothing is planned. The first plan is requested at startup."""
-    grid = planning_grid(scenario, cell_m)
-    zones = mission_zones(scenario)
-    planner = replanner(scenario, grid) if replanner else None
-    engine = Engine(scenario, SimClock(clock_factor), planner)
-    hub = Hub(engine.clock.now)
+    constraints = constraints_by_mission(scenario, cell_m)
+    nominal = nominal_zones(scenario)
+    grids = {mission: c.grid for mission, c in constraints.items()}
+    planner = replanner(scenario, grids) if replanner else None
+    engine = Engine(scenario, constraints, SimClock(clock_factor), planner)
+    audience = Audience(scenario, constraints)
+    hub = Hub(engine.clock.now, audience.sees)
     engine.subscribe(hub.publish)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        engine.request_plan()
+        engine.request_plans()
         ticker = asyncio.create_task(_tick_forever(engine))
         yield
         ticker.cancel()
@@ -94,13 +117,17 @@ def create_app(
     app = FastAPI(title="Corridor", lifespan=lifespan)
 
     @app.websocket("/ws")
-    async def ws_endpoint(websocket: WebSocket) -> None:
+    async def ws_endpoint(websocket: WebSocket, callsign: str = "") -> None:
         await websocket.accept()
-        outbox = hub.connect(snapshot(engine, grid, zones))
+        viewer = audience.viewer(callsign)
+        if viewer is None:
+            await websocket.close(code=UNKNOWN_CALLSIGN, reason=f"unknown callsign {callsign!r}")
+            return
+        outbox = hub.connect(viewer, snapshot(engine, audience, viewer, nominal))
         sender = asyncio.create_task(_pump(websocket, outbox))
         try:
             while True:
-                handle_message(await websocket.receive_text(), engine, hub, outbox)
+                handle_message(await websocket.receive_text(), viewer, engine, hub, outbox)
         except WebSocketDisconnect:
             pass
         finally:

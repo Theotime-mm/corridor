@@ -1,4 +1,5 @@
-"""Planning entry points: from a scenario and its cuts to timed routes and their comparison."""
+"""Planning entry points: from a mission, its scenario and the cuts to timed routes and their
+comparison. Each mission is planned on its own, on its own grid."""
 
 from __future__ import annotations
 
@@ -35,7 +36,11 @@ class MissionPlan:
 
 
 def plan_mission(
-    scenario: Scenario, grid: Grid, cuts: Sequence[Cut], earliest_departure_s: float = 0.0
+    scenario: Scenario,
+    mission: Mission,
+    grid: Grid,
+    cuts: Sequence[Cut],
+    earliest_departure_s: float = 0.0,
 ) -> MissionPlan | None:
     """Baseline, best route on confirmed cuts, best route on every cut; pick and compare.
 
@@ -47,33 +52,33 @@ def plan_mission(
     Routes leave no sooner than the mission departure and ``earliest_departure_s`` (a replan
     during the run cannot take off in the past). None when even the baseline has no route.
     """
-    mission = scenario.mission
     if earliest_departure_s > mission.departure_s:
-        departure = mission.model_copy(update={"departure_s": earliest_departure_s})
-        scenario = scenario.model_copy(update={"mission": departure})
-    baseline = plan_route(scenario, grid)
+        mission = mission.model_copy(update={"departure_s": earliest_departure_s})
+    baseline = plan_route(scenario, mission, grid)
     if baseline is None:
         return None
     status: PlanStatus = "baseline"
     optimised = baseline
     confirmed = [c for c in cuts if c.status == "confirmed"]
     if confirmed:
-        approved = plan_route(scenario, grid, confirmed)
+        approved = plan_route(scenario, mission, grid, confirmed)
         if approved is not None and _saves(approved, optimised):
             status, optimised = "approved", approved
     if len(confirmed) < len(cuts):
-        preview = plan_route(scenario, grid, cuts)
+        preview = plan_route(scenario, mission, grid, cuts)
         if preview is not None and _saves(preview, optimised):
             status, optimised = "preview", preview
     return MissionPlan(
         status=status,
-        metrics=_metrics(scenario.mission, baseline, optimised),
+        metrics=_metrics(mission, baseline, optimised),
         baseline_route=baseline,
         optimised_route=optimised,
     )
 
 
-def plan_route(scenario: Scenario, grid: Grid, cuts: Iterable[Cut] = ()) -> list[RoutePoint] | None:
+def plan_route(
+    scenario: Scenario, mission: Mission, grid: Grid, cuts: Iterable[Cut] = ()
+) -> list[RoutePoint] | None:
     """Route with the least flight time found, friendly jammers off during ``cuts`` only.
 
     No cut gives the baseline. Each cut window first shrinks by the safety margins, so the
@@ -83,12 +88,11 @@ def plan_route(scenario: Scenario, grid: Grid, cuts: Iterable[Cut] = ()) -> list
     time, then the earliest arrival. A better takeoff narrower than the coarse step can be
     missed. None when no route fits the battery.
     """
-    mission = scenario.mission
     start, goal = grid.cell_of(mission.launch), grid.cell_of(mission.target)
     if start is None or goal is None:
         return None
     windows = [w for w in (_usable(c) for c in cuts) if w is not None]
-    zones = mission_shapes(scenario)
+    zones = mission_shapes(scenario, mission)
     latest = max([mission.departure_s, *(w.end_s for w in windows)])
     timed = timed_masks(
         grid,
@@ -128,20 +132,19 @@ def plan_route(scenario: Scenario, grid: Grid, cuts: Iterable[Cut] = ()) -> list
 
 
 def plan_fallback(
-    scenario: Scenario, grid: Grid, position: Position, now_s: float
+    scenario: Scenario, mission: Mission, grid: Grid, position: Position, now_s: float
 ) -> MissionPlan | None:
     """Safe route for a drone already in the air at ``position``: no cut, take off now.
 
     The pilot stays at the launch point, so the zones are those of the mission; only the
     route starts elsewhere. Used when the drone can no longer keep its cut windows.
     """
-    mission = scenario.mission
     start, goal = grid.cell_of(position), grid.cell_of(mission.target)
     if start is None or goal is None:
         return None
     timed = timed_masks(
         grid,
-        mission_shapes(scenario),
+        mission_shapes(scenario, mission),
         LocalFrame(mission.launch),
         [],
         now_s,

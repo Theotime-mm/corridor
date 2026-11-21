@@ -3,14 +3,19 @@ import { CutsCard } from './components/CutsCard'
 import { FeedCard } from './components/FeedCard'
 import { MapPanel } from './components/MapPanel'
 import { MissionCard } from './components/MissionCard'
+import { MissionsCard } from './components/MissionsCard'
+import { SignIn } from './components/SignIn'
 import { TimelinePanel } from './components/TimelinePanel'
 import { TopBar } from './components/TopBar'
 import { useStore } from './store'
 
 export default function App() {
+  const callsign = useStore((s) => s.callsign)
   const lastError = useStore((s) => s.lastError)
   const setError = useStore((s) => s.setError)
   const hasSnapshot = useStore((s) => s.snapshot !== null)
+
+  if (!callsign) return <SignIn />
 
   return (
     <div className="layout">
@@ -25,6 +30,7 @@ export default function App() {
               </Alert>
             )}
             {!hasSnapshot && <Alert color="yellow">Waiting for corridor-server on /ws…</Alert>}
+            <MissionsCard />
             <MissionCard />
             <CutsCard />
             <FeedCard />

@@ -9,12 +9,18 @@ from corridor.domain.zones import (
     GRID_MARGIN_M,
     RING_VERTICES,
     Beam,
+    Zone,
     angle_off_axis,
     azimuth_to_angle,
     js_disc,
-    mission_zones,
-    planning_grid,
+    mission_constraints,
+    nominal_zones,
 )
+
+
+def mission_zones(scenario: Scenario) -> list[Zone]:
+    """Every zone of the first mission: on the demo, every threat concerns it."""
+    return mission_constraints(scenario, scenario.missions[0], 100).zones
 
 
 def js_db(
@@ -71,22 +77,22 @@ def test_demo_zones(scenario: Scenario) -> None:
     assert all(z.forbidden == "inside" for z in zones.values())
     assert all(len(z.ring) == RING_VERTICES for z in zones.values())
 
-    frame = LocalFrame(scenario.mission.launch)
-    target = frame.to_xy(scenario.mission.target)
+    frame = LocalFrame(scenario.missions[0].launch)
+    target = frame.to_xy(scenario.missions[0].target)
     ring = [frame.to_xy(p) for p in zones["J3"].ring]
     assert max(x for x, _ in ring) < target[0]  # the target is reachable
 
 
 def test_jammer_off_the_mission_band_has_no_zone(scenario: Scenario) -> None:
     data = scenario.model_dump(mode="json")
-    data["mission"]["band"] = "900MHz"
+    data["missions"][0]["band"] = "900MHz"
     zones = mission_zones(Scenario.model_validate(data))
     assert [z.threat for z in zones] == ["R1"]
 
 
 def test_planning_grid_covers_mission_and_threats_with_margin(scenario: Scenario) -> None:
-    grid = planning_grid(scenario, cell_m=100)
-    x, _ = grid.to_xy(scenario.mission.launch)
+    grid = mission_constraints(scenario, scenario.missions[0], 100).grid
+    x, _ = grid.to_xy(scenario.missions[0].launch)
     assert x == pytest.approx(GRID_MARGIN_M, abs=5)  # the launch point is the westernmost
     for threat in [*scenario.friendly_jammers, *scenario.enemy_threats]:
         assert grid.cell_of(threat.pos) is not None
@@ -126,7 +132,7 @@ def test_beam_across_north_wraps_around() -> None:
 
 def test_directional_ring_follows_the_main_and_sidelobe_boundaries(scenario: Scenario) -> None:
     directional = with_antenna(scenario)
-    mission = directional.mission
+    mission = directional.missions[0]
     frame = LocalFrame(mission.launch)
     j3 = directional.friendly_jammers[0]
     jammer = frame.to_xy(j3.pos)
@@ -144,7 +150,7 @@ def test_directional_ring_follows_the_main_and_sidelobe_boundaries(scenario: Sce
 
 
 def test_directional_zone_leaves_the_area_behind_the_beam(scenario: Scenario) -> None:
-    frame = LocalFrame(scenario.mission.launch)
+    frame = LocalFrame(scenario.missions[0].launch)
     ring = [
         frame.to_xy(p)
         for p in next(z for z in mission_zones(with_antenna(scenario)) if z.threat == "J3").ring
@@ -174,3 +180,57 @@ def test_invalid_antenna_is_rejected(scenario: Scenario, antenna: dict[str, floa
     data["friendly_jammers"][0]["antenna"] = antenna
     with pytest.raises(ValidationError):
         Scenario.model_validate(data)
+
+
+# --- several missions, nominal footprints --------------------------------------------------
+
+
+def test_a_mission_is_concerned_only_by_the_threats_near_it(two_missions: Scenario) -> None:
+    m1, m2 = (mission_constraints(two_missions, m, 100) for m in two_missions.missions)
+    assert (m1.jammers, sorted(m1.threats)) == (["J3"], ["E1", "R1"])
+    assert (m2.jammers, m2.threats) == (["J4"], [])
+    assert {z.threat for z in m2.zones} == {"J4"}
+    j3 = two_missions.friendly_jammers[0]
+    assert m2.grid.cell_of(j3.pos) is None  # M1's threats do not stretch M2's grid
+
+
+def test_a_jammer_off_the_band_does_not_concern_the_mission(scenario: Scenario) -> None:
+    data = scenario.model_dump(mode="json")
+    data["friendly_jammers"][0]["bands"] = ["900MHz"]
+    constraints = mission_constraints(Scenario.model_validate(data), scenario.missions[0], 100)
+    assert constraints.jammers == []
+
+
+def test_the_grid_grows_to_cover_a_concerned_threat(scenario: Scenario) -> None:
+    # A radar whose disc reaches the launch-target box but whose centre lies past it.
+    data = scenario.model_dump(mode="json")
+    launch = scenario.missions[0].launch
+    far = {"lat": launch.lat + 0.07, "lon": launch.lon}  # about 7.8 km north
+    data["enemy_threats"] = [{"type": "radar", "id": "R9", "pos": far, "radius_m": 5000}]
+    moved = Scenario.model_validate(data)
+    constraints = mission_constraints(moved, moved.missions[0], 100)
+    assert constraints.threats == ["R9"]
+    assert constraints.grid.cell_of(moved.enemy_threats[0].pos) is not None
+
+
+def test_nominal_zone_is_where_the_reference_link_is_lost(scenario: Scenario) -> None:
+    zones = {z.threat: z for z in nominal_zones(scenario)}
+    assert set(zones) == {"J3", "E1", "R1"}
+    j3 = scenario.friendly_jammers[0]
+    frame = LocalFrame(j3.pos)
+    link = scenario.reference_link
+    radius = link.range_m * math.sqrt(j3.eirp_w / link.eirp_w)  # 0 dB threshold
+    for p in zones["J3"].ring:
+        assert math.hypot(*frame.to_xy(p)) == pytest.approx(radius, rel=1e-6)
+        # On the ring, a drone range_m from its pilot sees J/S at the threshold.
+        js = (j3.eirp_w / math.hypot(*frame.to_xy(p)) ** 2) / (link.eirp_w / link.range_m**2)
+        assert 10 * math.log10(js) == pytest.approx(0, abs=1e-6)
+
+
+def test_nominal_zone_of_a_directional_jammer_follows_its_beam(scenario: Scenario) -> None:
+    directional = with_antenna(scenario)
+    zone = next(z for z in nominal_zones(directional) if z.threat == "J3")
+    frame = LocalFrame(directional.friendly_jammers[0].pos)
+    ring = [frame.to_xy(p) for p in zone.ring]
+    main = max(y for _, y in ring)
+    assert min(y for _, y in ring) == pytest.approx(-main / 10, rel=1e-3)  # -20 dB: radius / 10

@@ -6,7 +6,7 @@ import type { Feature, FeatureCollection } from 'geojson'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import type { Grid, Position, RoutePoint, Scenario, Zone } from '../api/protocol'
-import { gridBounds, type ZoneState } from '../domain/view'
+import { boundsOf, gridBounds, type ZoneState } from '../domain/view'
 
 // Draft basemap: online OSM raster tiles. TODO: offline PMTiles extract of the demo area.
 const STYLE: StyleSpecification = {
@@ -45,11 +45,37 @@ export const COLORS = {
 type FC = FeatureCollection
 const empty = (): FC => ({ type: 'FeatureCollection', features: [] })
 
+export interface Scene {
+  /** Only what this callsign may see. */
+  scenario: Scenario
+  /** Grid of every mission in view; the map fits them all. */
+  grids: Grid[]
+  /** Zones of the selected mission, for its pilot, and its grid (for `forbidden: outside`). */
+  missionGrid: Grid | null
+  missionZones: Zone[]
+  /** Mission-independent footprints (command and operator views). */
+  nominalZones: Zone[]
+}
+
+export interface MissionRoutes {
+  mission: string
+  baseline: RoutePoint[] | null
+  optimised: RoutePoint[] | null
+  /** The selected mission shows its detour too, and stands out. */
+  selected: boolean
+}
+
+export interface DroneMark {
+  mission: string
+  pos: Position
+  selected: boolean
+}
+
 export interface MapView {
-  setScene(scenario: Scenario, grid: Grid, zones: Zone[]): void
+  setScene(scene: Scene): void
   setZoneStates(states: Record<string, ZoneState>): void
-  setRoutes(baseline: RoutePoint[] | null, optimised: RoutePoint[] | null): void
-  setDrone(pos: Position | null): void
+  setRoutes(routes: MissionRoutes[]): void
+  setDrones(drones: DroneMark[]): void
   destroy(): void
 }
 
@@ -63,11 +89,11 @@ export function createMapView(container: HTMLElement): MapView {
 
   let loaded = false
   const pending: Record<string, FC> = {}
-  let grid: Grid | null = null
-  let zones: Zone[] = []
+  let scene: Scene | null = null
+  let fitted = ''
   let states: Record<string, ZoneState> = {}
   const markers: maplibregl.Marker[] = []
-  let droneMarker: maplibregl.Marker | null = null
+  const drones = new Map<string, maplibregl.Marker>()
 
   const setData = (source: string, data: FC) => {
     pending[source] = data
@@ -75,10 +101,23 @@ export function createMapView(container: HTMLElement): MapView {
   }
 
   map.on('load', () => {
-    for (const id of ['grid', 'zones', 'routes']) map.addSource(id, { type: 'geojson', data: pending[id] ?? empty() })
+    for (const id of ['grid', 'nominal', 'zones', 'routes']) map.addSource(id, { type: 'geojson', data: pending[id] ?? empty() })
     map.addLayer({
       id: 'grid-line', type: 'line', source: 'grid',
-      paint: { 'line-color': '#868e96', 'line-width': 1, 'line-dasharray': [4, 4] },
+      paint: {
+        'line-color': '#868e96',
+        'line-width': ['case', ['get', 'selected'], 1.5, 1],
+        'line-opacity': ['case', ['get', 'selected'], 1, 0.4],
+        'line-dasharray': [4, 4],
+      },
+    })
+    map.addLayer({
+      id: 'nominal-fill', type: 'fill', source: 'nominal',
+      paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['*', 0.5, ['get', 'opacity']] },
+    })
+    map.addLayer({
+      id: 'nominal-line', type: 'line', source: 'nominal',
+      paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-dasharray': [3, 2] },
     })
     map.addLayer({
       id: 'zones-fill', type: 'fill', source: 'zones',
@@ -94,44 +133,65 @@ export function createMapView(container: HTMLElement): MapView {
     })
     map.addLayer({
       id: 'route-optimised', type: 'line', source: 'routes', filter: ['==', ['get', 'kind'], 'optimised'],
-      paint: { 'line-color': COLORS.optimised, 'line-width': 4 },
+      paint: {
+        'line-color': COLORS.optimised,
+        'line-width': ['case', ['get', 'selected'], 4, 2.5],
+        'line-opacity': ['case', ['get', 'selected'], 1, 0.6],
+      },
     })
     loaded = true
   })
 
-  const renderZones = () => {
-    if (!grid) return
-    const outer = [...gridBounds(grid), gridBounds(grid)[0]]
-    const features: Feature[] = zones.map((z) => {
+  const zoneFeatures = (zones: Zone[], outer: number[][] | null): Feature[] =>
+    zones.map((z) => {
       const ring = [...z.ring.map((p) => [p.lon, p.lat]), [z.ring[0].lon, z.ring[0].lat]]
       const { color, opacity } = zoneStyle(z, states[z.threat] ?? 'on')
       // forbidden "outside": everything but the ring, drawn as the grid with the ring as a hole
-      const coordinates = z.forbidden === 'inside' ? [ring] : [outer, ring]
+      const coordinates = z.forbidden === 'outside' && outer ? [outer, ring] : [ring]
       return {
         type: 'Feature',
         properties: { threat: z.threat, color, opacity },
         geometry: { type: 'Polygon', coordinates },
       }
     })
-    setData('zones', { type: 'FeatureCollection', features })
+
+  const renderZones = () => {
+    if (!scene) return
+    const g = scene.missionGrid
+    const outer = g ? [...gridBounds(g), gridBounds(g)[0]] : null
+    setData('zones', { type: 'FeatureCollection', features: zoneFeatures(scene.missionZones, outer) })
+    setData('nominal', { type: 'FeatureCollection', features: zoneFeatures(scene.nominalZones, null) })
   }
 
   return {
-    setScene(scenario, g, zs) {
-      grid = g
-      zones = zs
-      const b = gridBounds(g)
+    setScene(next) {
+      scene = next
+      const { scenario, grids, missionGrid } = next
       setData('grid', {
         type: 'FeatureCollection',
-        features: [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [...b, b[0]] } }],
+        features: grids.map((g) => {
+          const b = gridBounds(g)
+          return {
+            type: 'Feature',
+            properties: { selected: g === missionGrid },
+            geometry: { type: 'LineString', coordinates: [...b, b[0]] },
+          }
+        }),
       })
       renderZones()
-      map.fitBounds([b[0], b[2]], { padding: 30, duration: 0 })
+      // Fit once per set of grids, not on every mission selection.
+      const box = boundsOf(grids)
+      const key = JSON.stringify(box)
+      if (box && key !== fitted) {
+        fitted = key
+        map.fitBounds(box, { padding: 30, duration: 0 })
+      }
 
       markers.splice(0).forEach((m) => m.remove())
-      const m = scenario.mission
-      markers.push(label(map, m.launch, `${m.pilot_callsign} (launch)`, '#4dabf7'))
-      markers.push(label(map, m.target, 'TARGET', '#ffd43b'))
+      for (const m of scenario.missions) {
+        markers.push(label(map, m.launch, `${m.pilot_callsign} (${m.id})`, '#4dabf7'))
+        markers.push(label(map, m.target, `TARGET ${m.id}`, '#ffd43b'))
+      }
       for (const j of scenario.friendly_jammers) markers.push(label(map, j.pos, `${j.id} · ${j.operator_callsign}`, COLORS.friendlyOn))
       for (const t of scenario.enemy_threats) markers.push(label(map, t.pos, t.id, t.type === 'radar' ? COLORS.radar : COLORS.enemy))
     },
@@ -139,25 +199,38 @@ export function createMapView(container: HTMLElement): MapView {
       states = s
       renderZones()
     },
-    setRoutes(baseline, optimised) {
-      const line = (kind: string, r: RoutePoint[] | null): Feature[] =>
+    setRoutes(routes) {
+      const line = (kind: string, r: RoutePoint[] | null, mission: string, selected: boolean): Feature[] =>
         r && r.length > 1
-          ? [{ type: 'Feature', properties: { kind }, geometry: { type: 'LineString', coordinates: r.map((p) => [p.lon, p.lat]) } }]
+          ? [{ type: 'Feature', properties: { kind, mission, selected }, geometry: { type: 'LineString', coordinates: r.map((p) => [p.lon, p.lat]) } }]
           : []
-      setData('routes', { type: 'FeatureCollection', features: [...line('baseline', baseline), ...line('optimised', optimised)] })
+      const features = routes.flatMap((r) => [
+        ...(r.selected ? line('baseline', r.baseline, r.mission, true) : []),
+        ...line('optimised', r.optimised, r.mission, r.selected),
+      ])
+      setData('routes', { type: 'FeatureCollection', features })
     },
-    setDrone(pos) {
-      if (!pos) {
-        droneMarker?.remove()
-        droneMarker = null
-        return
+    setDrones(next) {
+      const seen = new Set<string>()
+      for (const d of next) {
+        seen.add(d.mission)
+        let marker = drones.get(d.mission)
+        if (!marker) {
+          const el = document.createElement('div')
+          el.className = 'drone-marker'
+          el.title = d.mission
+          marker = new maplibregl.Marker({ element: el }).setLngLat([d.pos.lon, d.pos.lat]).addTo(map)
+          drones.set(d.mission, marker)
+        }
+        // classList, not className: MapLibre keeps its own classes on the element.
+        marker.getElement().classList.toggle('other', !d.selected)
+        marker.setLngLat([d.pos.lon, d.pos.lat])
       }
-      if (!droneMarker) {
-        const el = document.createElement('div')
-        el.className = 'drone-marker'
-        droneMarker = new maplibregl.Marker({ element: el }).setLngLat([pos.lon, pos.lat]).addTo(map)
-      } else {
-        droneMarker.setLngLat([pos.lon, pos.lat])
+      for (const [mission, marker] of drones) {
+        if (!seen.has(mission)) {
+          marker.remove()
+          drones.delete(mission)
+        }
       }
     },
     destroy() {
