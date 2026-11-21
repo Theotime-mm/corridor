@@ -52,8 +52,9 @@ def test_snapshot_then_commands(scenario: Scenario) -> None:
 
 
 def test_events_reach_every_client_and_bad_messages_get_an_error(scenario: Scenario) -> None:
-    client = TestClient(create_app(scenario, clock_factor=20, cell_m=100))
+    app = create_app(scenario, clock_factor=20, cell_m=100)
     with (
+        TestClient(app) as client,  # one event loop for every connection
         client.websocket_connect("/ws?callsign=CMD") as a,
         client.websocket_connect("/ws?callsign=PILOT-1") as b,
     ):
@@ -90,8 +91,9 @@ def test_a_client_only_acts_as_itself(scenario: Scenario) -> None:
 
 
 def test_each_role_sees_its_own_part(two_missions: Scenario) -> None:
-    client = TestClient(create_app(two_missions, clock_factor=20, cell_m=100))
+    app = create_app(two_missions, clock_factor=20, cell_m=100)
     with (
+        TestClient(app) as client,  # one event loop for every connection
         client.websocket_connect("/ws?callsign=CMD") as command,
         client.websocket_connect("/ws?callsign=PILOT-1") as pilot,
         client.websocket_connect("/ws?callsign=EW-J4") as operator,
@@ -225,8 +227,9 @@ def test_a_requested_mission_resyncs_who_sees_it(two_missions: Scenario) -> None
     """PILOT-1 starts with no mission: its request brings M1's jammer into its view."""
     data = two_missions.model_dump(mode="json")
     m1 = data["missions"].pop(0)
-    client = TestClient(create_app(Scenario.model_validate(data), clock_factor=20, cell_m=100))
+    app = create_app(Scenario.model_validate(data), clock_factor=20, cell_m=100)
     with (
+        TestClient(app) as client,  # one event loop for every connection
         client.websocket_connect("/ws?callsign=PILOT-1") as pilot,
         client.websocket_connect("/ws?callsign=PILOT-2") as other,
         client.websocket_connect("/ws?callsign=EW-J3") as operator,
@@ -268,9 +271,10 @@ def test_rf_endpoints_without_any_mission(scenario: Scenario) -> None:
 
 def test_an_updated_mission_resyncs_every_client(two_missions: Scenario) -> None:
     """M2 moves from J4 onto J3: J4's operator loses it, J3's operator gains it."""
-    client = TestClient(create_app(two_missions, clock_factor=20, cell_m=100))
+    app = create_app(two_missions, clock_factor=20, cell_m=100)
     m1 = two_missions.missions[0].model_dump(mode="json")
     with (
+        TestClient(app) as client,  # one event loop for every connection
         client.websocket_connect("/ws?callsign=PILOT-2") as pilot,
         client.websocket_connect("/ws?callsign=EW-J4") as old_operator,
         client.websocket_connect("/ws?callsign=EW-J3") as new_operator,
