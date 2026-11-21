@@ -13,3 +13,6 @@ infra/ots/ots_config.env
 *.p12
 *.pem
 captures/
+
+# resources prototype output
+resources/spectrum_sync/out/

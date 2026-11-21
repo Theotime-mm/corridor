@@ -1,0 +1,112 @@
+{
+  "name": "demo-no-cut",
+  "origin": {
+    "lat": 48.95,
+    "lon": 4.4
+  },
+  "start_time": "2026-11-28T14:00:00Z",
+  "grid": {
+    "x0": -1500,
+    "y0": -4500,
+    "width_m": 11000,
+    "height_m": 9000,
+    "cell_m": 100
+  },
+  "propagation": {
+    "exponent": 2.2,
+    "breakpoint_m": 100
+  },
+  "planning": {
+    "enter_margin_s": 30,
+    "exit_margin_s": 60,
+    "max_mission_s": 2400
+  },
+  "drone": {
+    "id": "UAV-1",
+    "callsign": "FALCON 1",
+    "speed_mps": 15,
+    "altitude_m": 80,
+    "cruise_power_w": 220,
+    "hover_power_w": 200,
+    "battery_wh": 75,
+    "reserve_pct": 20,
+    "c2": {
+      "band": "2.4",
+      "pilot_eirp_dbm": 36,
+      "js_crit_db": 15,
+      "sensitivity_dbm": -105
+    },
+    "video": {
+      "band": "5.8",
+      "drone_eirp_dbm": 30,
+      "js_crit_db": 6,
+      "sensitivity_dbm": -102
+    }
+  },
+  "pilot": {
+    "callsign": "VIPER",
+    "xy": [
+      0,
+      0
+    ]
+  },
+  "target": {
+    "callsign": "OBJ ALPHA",
+    "xy": [
+      7500,
+      0
+    ]
+  },
+  "jammers": [
+    {
+      "id": "J3",
+      "callsign": "REB-3",
+      "side": "friendly",
+      "xy": [
+        3300,
+        0
+      ],
+      "eirp_dbm": 40,
+      "bands": [
+        "2.4",
+        "0.9"
+      ],
+      "antenna": {
+        "type": "omni"
+      },
+      "schedule": {
+        "default": "on",
+        "off_windows": [],
+        "on_windows": []
+      }
+    },
+    {
+      "id": "E1",
+      "callsign": "ENEMY EW",
+      "side": "enemy",
+      "xy": [
+        4500,
+        4300
+      ],
+      "eirp_dbm": 43,
+      "bands": [
+        "2.4",
+        "0.9"
+      ],
+      "antenna": {
+        "type": "omni"
+      }
+    }
+  ],
+  "radars": [
+    {
+      "id": "R1",
+      "callsign": "ENEMY RADAR",
+      "xy": [
+        3600,
+        -2500
+      ],
+      "radius_m": 1600
+    }
+  ]
+}

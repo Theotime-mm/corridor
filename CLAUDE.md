@@ -34,8 +34,9 @@ negotiate corridors past friendly jammers over group chats.
 - Scenario format and demo scenario.
 - Pitch content.
 
-A standalone prototype of a planner + CoT output exists outside this repo (`../spectrum_sync`).
-It is a reference only, not adopted.
+A standalone working prototype of a planner + CoT output is in `resources/spectrum_sync/`
+(reference only, not adopted). Research notes with sources: `resources/research.md`.
+`resources/README.md` says what each piece is for.
 
 ## Existing solutions (for positioning)
 
