@@ -125,6 +125,13 @@ Two kinds of data, kept apart:
   - `low`, for terrain masking: lowest ground in the cell. A hill or building hiding the drone
     from an emitter is never taken higher than it is, so no shadow is assumed where there is
     none (jamming zones, pilot link, radars).
+- **Buildings** (`terrain.buildings`, optional, needs `dem`): OpenStreetMap footprints with
+  `height_m` (the `height` tag, else `building:levels` x 3 m, else 10 m), downloaded once per
+  demo area with `uv run python tools/fetch_buildings.py <name> S W N E` into
+  `backend/data/buildings_<name>.geojson`. Raised into the elevation: every pixel a footprint
+  touches becomes ground + height (ground: lowest elevation within 5 pixels of its centre, so a
+  roof on a slope may come out a little low). Planner, 3D zones, profile and RF endpoints all
+  see them. `GET /api/buildings` serves the file for the map (empty collection without).
   The Copernicus water body mask is not used (not in `backend/data/`); the rule above covers
   rivers narrower than about two cells. The RF endpoints (`/api/rf/*`) use the same file instead of guessing one
   from the latitude. `mode`: `2d` (default, one layer, free-space discs) or `3d` (the levels,
@@ -524,7 +531,12 @@ Route points carry `alt_m` (0 on the ground). Smoothing pulls lines within one l
 or descent stays as planned, like a hold. In flight, the safety rule checks the zones at the
 drone's level (both levels during a climb). On the Munich demo: detour 686 s with climbs to
 120 m (646 s in 2D), J3 cut 629 s; a plan takes about 1 to 2 s against 0.1 to 0.5 s in 2D,
-within the 3 s replan allowance. Not yet: the pilot's minimum signal, radars masked by terrain,
+within the 3 s replan allowance. Hong Kong (`scenarios/hongkong.json`, 3D with 31 395 OSM
+buildings): pilot on the Tsim Sha Tsui waterfront, target in Quarry Bay, friendly jammer (2 W)
+on the harbour crossing, enemy jammer (1 W) on Victoria Peak. Detour 432 s climbing to 250 m
+(up to 560 m above sea level over the towers), 308 s through the harbour cut: 29 % saved, where
+2D gives 7 %. A pilot standing among the towers (inland Tsim Sha Tsui) gets no route at all: the
+city shadows a 2 m antenna. Not yet: the pilot's minimum signal, radars masked by terrain,
 a vertical speed or battery cost of its own for climbing.
 
 **Search: SIPP (safe interval path planning)** (`domain/planner/astar.py`).

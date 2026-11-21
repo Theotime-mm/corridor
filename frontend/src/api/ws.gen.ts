@@ -332,6 +332,10 @@ export type Dem = string | null;
  */
 export type LevelsM = [number, ...number[]];
 /**
+ * Building footprints with height_m (GeoJSON from tools/fetch_buildings.py), a path inside backend/data/; raised into the elevation. Needs dem.
+ */
+export type Buildings = string | null;
+/**
  * 2d: one layer, free-space zones (discs). 3d: the flight levels, zones through the terrain, climbs and descents.
  */
 export type Mode = "2d" | "3d";
@@ -941,6 +945,7 @@ export interface PlannedCut {
 export interface Terrain {
   dem: Dem;
   levels_m: LevelsM;
+  buildings: Buildings;
   mode: Mode;
 }
 /**
