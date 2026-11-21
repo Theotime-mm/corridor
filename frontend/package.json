@@ -1,0 +1,35 @@
+{
+  "name": "corridor-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "gen:types": "json2ts -i ../schema/ws.schema.json -o src/api/ws.gen.ts --unreachableDefinitions --additionalProperties false"
+  },
+  "dependencies": {
+    "@mantine/core": "^9.8.2",
+    "@mantine/hooks": "^9.8.2",
+    "maplibre-gl": "^6.19.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "vis-timeline": "^8.5.6",
+    "zustand": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "json-schema-to-typescript": "^16.0.0",
+    "oxlint": "^1.90.0",
+    "postcss": "^8.5.33",
+    "postcss-preset-mantine": "^1.18.0",
+    "postcss-simple-vars": "^7.0.1",
+    "typescript": "~7.0.2",
+    "vite": "^8.3.6"
+  }
+}
